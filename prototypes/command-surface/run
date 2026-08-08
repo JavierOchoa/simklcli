@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+prototype_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+prototype_env="${TMPDIR:-/tmp}/simklcli-command-surface-prototype"
+
+if [ ! -x "$prototype_env/bin/python" ]; then
+    python3 -m venv "$prototype_env"
+    "$prototype_env/bin/python" -m pip install --quiet 'typer>=0.16,<1' 'rich>=14,<15'
+fi
+
+exec "$prototype_env/bin/python" "$prototype_dir/app.py" "$@"
+
