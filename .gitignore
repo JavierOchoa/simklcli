@@ -1,0 +1,13 @@
+# Local credentials and overrides
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# In-repository worktrees
+.worktrees/
+
+# Python development artifacts
+.venv/
+__pycache__/
+*.py[cod]
