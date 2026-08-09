@@ -145,8 +145,6 @@ def watched_target(
     season: int | None,
     episode: int | None,
     all_episodes: bool,
-    *,
-    allow_standalone: bool = True,
 ) -> str:
     if all_episodes and episode is not None:
         raise typer.BadParameter("--all cannot be combined with --episode")
@@ -160,11 +158,7 @@ def watched_target(
         return f"Anime Episode {episode}"
     if season is not None:
         raise typer.BadParameter("marking a whole Season requires --all")
-    if not allow_standalone:
-        raise typer.BadParameter(
-            "unmark requires --episode or --all; removing a standalone item is `library remove`"
-        )
-    return "the standalone item (reject an episodic parent unless --all is explicit)"
+    return "the standalone item"
 
 
 @app.command()
@@ -178,7 +172,7 @@ def surface() -> None:
         ("Authentication", "auth login | status | logout", "One Authenticated Account; explicit lifecycle."),
         ("Catalog", "search | lookup", "Search returns candidates; lookup resolves one Media Reference."),
         ("Library", "library list | set-status | remove | repair", "Use domain language; synchronization stays internal."),
-        ("Watched State", "watched mark | unmark", "Keep Viewing separate from List Status."),
+        ("Watched State", "watched mark | unmark", "Symmetrical targets; preserve unrelated Library state."),
         ("User Rating", "rating set | remove", "The verb carries the mutation; score is positional."),
     ]
     for row in rows:
@@ -188,6 +182,7 @@ def surface() -> None:
         Panel(
             "[bold]Media References[/bold] accept `simkl:3708`, qualified External IDs such as `imdb:tt0133093`, or title text with optional --kind/--year.\n\n"
             "[bold]Human output[/bold] uses Rich tables and panels. Each read command offers --json; JSON is the only stdout payload and disables prompts. Diagnostics go to stderr.\n\n"
+            "[bold]Symmetry[/bold] watched mark and watched unmark accept identical selectors. Bare references target standalone items; episodic parents require --episode, --season … --all, or --all. Unmarking preserves List Status and User Rating.\n\n"
             "[bold]Safety[/bold] prompts only for destructive whole-item actions in an interactive terminal; scripts must pass --yes. Ambiguous title resolution fails nonzero in non-interactive/JSON use.\n\n"
             "[bold]Freshness[/bold] Library reads reconcile automatically. --offline explicitly reads a dated Library Snapshot; library repair explicitly rebuilds it.",
             title="Hypothesis",
@@ -341,6 +336,7 @@ def watched_mark(
     season: Annotated[int | None, typer.Option(min=0, help="Show Season; omit for Anime.")] = None,
     episode: Annotated[int | None, typer.Option(min=1, help="Episode Number.")] = None,
     all_episodes: Annotated[bool, typer.Option("--all", help="Explicitly mark every applicable Episode.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm a Bulk Watched Update for non-interactive use.")] = False,
     watched_at: Annotated[str | None, typer.Option("--at", help="Viewing time as ISO-8601; defaults to now.")] = None,
     rewatch: Annotated[bool, typer.Option(help="Record a later Viewing; may require Simkl Pro/VIP.")] = False,
     kind: Annotated[Kind | None, typer.Option(help="Disambiguate the Media Reference.")] = None,
@@ -349,12 +345,17 @@ def watched_mark(
 ) -> None:
     """Record a Viewing or an explicit Bulk Watched Update."""
     target = watched_target(season, episode, all_episodes)
+    if all_episodes and not (yes or typer.confirm(f"Mark {target} watched?")):
+        raise typer.Abort()
     payload = {"item": {"simkl_id": 3708}, "target": target, "watched_at": watched_at or "now", "rewatch": rewatch, "changed": True}
     if json_output:
         emit_json(payload)
         return
     console.print(f"[green]Marked {target} watched at {watched_at or 'now'}[/green]")
-    emit_trace(remote=f"Record {'a Rewatch' if rewatch else 'Viewing/Watched State'} for {target}; inspect not_found and resolved status.", local="Focused reconciliation updates Watched State and any resulting List Status.", resolution=ref_text(reference, kind, year))
+    resolution = ref_text(reference, kind, year)
+    if season is None and episode is None and not all_episodes:
+        resolution += " Reject an episodic parent unless --all is explicit."
+    emit_trace(remote=f"Record {'a Rewatch' if rewatch else 'Viewing/Watched State'} for {target}; inspect not_found and resolved status.", local="Focused reconciliation updates Watched State and any resulting List Status.", resolution=resolution)
 
 
 @watched_app.command("unmark")
@@ -364,12 +365,41 @@ def watched_unmark(
     episode: Annotated[int | None, typer.Option(min=1, help="Episode Number.")] = None,
     all_episodes: Annotated[bool, typer.Option("--all", help="Explicitly clear every applicable Episode.")] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm a bulk update for non-interactive use.")] = False,
+    kind: Annotated[Kind | None, typer.Option(help="Disambiguate the Media Reference.")] = None,
+    year: Annotated[int | None, typer.Option(help="Disambiguate title text.")] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit the proposed result as JSON and never prompt.")] = False,
 ) -> None:
-    """Clear selected Watched State without removing the parent from the Library."""
+    """Clear Watched State while preserving Library status and User Rating."""
     if all_episodes and not (yes or typer.confirm("Clear Watched State for every applicable Episode?")):
         raise typer.Abort()
-    target = watched_target(season, episode, all_episodes, allow_standalone=False)
-    emit_trace(remote=f"Clear Watched State for {target}; keep the parent Library item and User Rating.", local="Focused reconciliation updates the affected Library Snapshot state.", resolution=f"Resolve `{reference}` as the parent Media Reference.")
+    target = watched_target(season, episode, all_episodes)
+    if season is None and episode is None and not all_episodes:
+        remote = (
+            "Capture current List Status and User Rating, clear the standalone item's "
+            "Watched State through Simkl's item-level removal, restore the captured "
+            "Library state, then verify the complete outcome."
+        )
+    else:
+        remote = f"Clear Watched State for {target} directly; retain the parent Library item and User Rating."
+    payload = {
+        "item": {"simkl_id": 3708},
+        "target": target,
+        "watched": False,
+        "preserved": ["library_membership", "list_status", "user_rating"],
+        "changed": True,
+    }
+    if json_output:
+        emit_json(payload)
+        return
+    console.print(f"[green]Cleared Watched State for {target}; preserved Library status and User Rating[/green]")
+    resolution = ref_text(reference, kind, year)
+    if season is None and episode is None and not all_episodes:
+        resolution += " Reject an episodic parent unless --all is explicit."
+    emit_trace(
+        remote=remote,
+        local="Focused reconciliation must confirm unchanged List Status and User Rating plus cleared Watched State.",
+        resolution=resolution,
+    )
 
 
 @rating_app.command("set")

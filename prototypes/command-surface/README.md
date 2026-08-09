@@ -24,12 +24,17 @@ Useful reactions:
 ./prototypes/command-surface/run library list --status plan-to-watch
 ./prototypes/command-surface/run library set-status simkl:3708 completed
 ./prototypes/command-surface/run watched mark simkl:3708 --episode 1 --at 2026-08-08T20:00:00Z
+./prototypes/command-surface/run watched unmark simkl:3708
 ./prototypes/command-surface/run rating set simkl:3708 10
 ```
+
+`watched mark` and `watched unmark` intentionally accept the same target
+selectors. For standalone items, unmarking preserves Library membership, List
+Status, and User Rating; the eventual implementation hides and verifies Simkl's
+multi-request workaround.
 
 The design hypothesis is documented by `surface`:
 
 ```sh
 ./prototypes/command-surface/run surface
 ```
-
