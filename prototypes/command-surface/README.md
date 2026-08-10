@@ -31,7 +31,8 @@ Useful reactions:
 `watched mark` and `watched unmark` intentionally accept the same target
 selectors. For standalone items, unmarking preserves Library membership, List
 Status, and User Rating; the eventual implementation hides and verifies Simkl's
-multi-request workaround.
+multi-request workaround. Bulk updates confirm interactively; non-interactive
+and `--json` use must pass `--yes`.
 
 The design hypothesis is documented by `surface`:
 

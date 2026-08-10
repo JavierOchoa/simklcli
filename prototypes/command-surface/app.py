@@ -157,8 +157,23 @@ def watched_target(
     if episode is not None:
         return f"Anime Episode {episode}"
     if season is not None:
-        raise typer.BadParameter("marking a whole Season requires --all")
+        raise typer.BadParameter("selecting a whole Season requires --all")
     return "the standalone item"
+
+
+def confirm_bulk_update(
+    *,
+    selected: bool,
+    yes: bool,
+    json_output: bool,
+    prompt: str,
+) -> None:
+    if not selected or yes:
+        return
+    if json_output:
+        raise typer.BadParameter("--yes is required with --json for a Bulk Watched Update")
+    if not typer.confirm(prompt):
+        raise typer.Abort()
 
 
 @app.command()
@@ -345,8 +360,12 @@ def watched_mark(
 ) -> None:
     """Record a Viewing or an explicit Bulk Watched Update."""
     target = watched_target(season, episode, all_episodes)
-    if all_episodes and not (yes or typer.confirm(f"Mark {target} watched?")):
-        raise typer.Abort()
+    confirm_bulk_update(
+        selected=all_episodes,
+        yes=yes,
+        json_output=json_output,
+        prompt=f"Mark {target} watched?",
+    )
     payload = {"item": {"simkl_id": 3708}, "target": target, "watched_at": watched_at or "now", "rewatch": rewatch, "changed": True}
     if json_output:
         emit_json(payload)
@@ -370,9 +389,13 @@ def watched_unmark(
     json_output: Annotated[bool, typer.Option("--json", help="Emit the proposed result as JSON and never prompt.")] = False,
 ) -> None:
     """Clear Watched State while preserving Library status and User Rating."""
-    if all_episodes and not (yes or typer.confirm("Clear Watched State for every applicable Episode?")):
-        raise typer.Abort()
     target = watched_target(season, episode, all_episodes)
+    confirm_bulk_update(
+        selected=all_episodes,
+        yes=yes,
+        json_output=json_output,
+        prompt=f"Clear Watched State for {target}?",
+    )
     if season is None and episode is None and not all_episodes:
         remote = (
             "Capture current List Status and User Rating, clear the standalone item's "
