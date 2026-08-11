@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 from pathlib import Path
 from threading import Event, Thread
@@ -63,8 +64,9 @@ def test_plaintext_credentials_round_trip_in_an_owner_only_file(tmp_path: Path) 
     assert credential.access_token == "secret-token"
     assert credential.account == Account(id=12345, name="Javier")
     assert credential.source is CredentialSource.FILE
-    mode = stat.S_IMODE((tmp_path / "config" / "auth.json").stat().st_mode)
-    assert mode == 0o600
+    if os.name != "nt":
+        mode = stat.S_IMODE((tmp_path / "config" / "auth.json").stat().st_mode)
+        assert mode == 0o600
 
 
 def test_keyring_credentials_keep_token_out_of_account_metadata(tmp_path: Path) -> None:
