@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "simklcli"
+version = "0.1.0"
+description = "Track movies, shows, and anime on Simkl from the command line."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Javier Ochoa" }]
+dependencies = [
+  "filelock>=3.18,<4",
+  "httpx>=0.28,<1",
+  "keyring>=25,<26",
+  "platformdirs>=4.3,<5",
+  "rich>=14,<15",
+  "typer>=0.16,<1",
+]
+
+[project.scripts]
+simkl = "simklcli.cli:app"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/simklcli"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --cov=simklcli --cov-branch --cov-report=term-missing --cov-fail-under=90"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["simklcli"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["prototypes"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
