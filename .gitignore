@@ -16,3 +16,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 dist/
+.release-wheel/
+.release-sdist/
+smoke-*.json

@@ -42,9 +42,22 @@ class Runtime:
     open_browser: Callable[[str], bool]
     interactive: bool
 
+    def identity_gate(self) -> CrossProcessRateGate:
+        return self.rate_gate or CrossProcessRateGate(
+            self.data_dir / "rate-gates",
+            client_id=self.environ.get("SIMKL_CLIENT_ID", DEFAULT_CLIENT_ID),
+        )
+
     def api_client(self) -> SimklClient:
         from simklcli.api import SimklClient
 
+        if self.rate_gate is not None and not self.environ.get("SIMKL_ACCESS_TOKEN", "").strip():
+            try:
+                stored = self.credentials.read()
+            except CredentialStorageError:
+                stored = None
+            if stored is not None and stored.account is not None:
+                self.rate_gate.bind_account(stored.access_token, stored.account.id)
         return SimklClient(
             client_id=self.environ.get("SIMKL_CLIENT_ID", DEFAULT_CLIENT_ID),
             transport=self.transport,

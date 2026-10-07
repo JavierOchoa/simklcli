@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 import httpx
@@ -22,6 +23,16 @@ class SimklResponseError(RuntimeError):
 
 class InvalidAccessTokenError(SimklResponseError):
     """Simkl confirmed that an Access Token is invalid or revoked."""
+
+    remote_success = False
+
+
+class PostBlockedError(SimklResponseError):
+    """The server explicitly blocked this POST; stop without replaying it."""
+
+
+class PartialWriteError(SimklResponseError):
+    """The response reports unmatched items or an unverified partial result."""
 
 
 class RateGate(Protocol):
@@ -70,6 +81,7 @@ class SimklClient:
         self._sleep = sleep
         self._jitter = jitter or (lambda delay: random.uniform(delay * 0.8, delay * 1.2))
         self._rate_gate = rate_gate or NoWaitRateGate()
+        self.account_plan: str | None = None
 
     def start_pin_authorization(self) -> PinAuthorization:
         response = self._get("/oauth/pin")
@@ -128,12 +140,23 @@ class SimklClient:
             raise SimklResponseError(
                 "Simkl returned account settings without a stable account ID and display name."
             ) from exc
+        plan = account_payload.get("type")
+        self.account_plan = plan if isinstance(plan, str) else None
+        bind_account = getattr(self._rate_gate, "bind_account", None)
+        if callable(bind_account):
+            bind_account(access_token, account_id)
         return Account(id=account_id, name=name)
 
-    def _get(self, path: str) -> httpx.Response:
+    def _get(
+        self,
+        path: str,
+        *,
+        access_token: str | None = None,
+        params: dict[str, str | int] | None = None,
+    ) -> httpx.Response:
         retry_delays = (1.0, 2.0, 4.0, 8.0, 16.0)
         for retry_delay in retry_delays:
-            response = self._request("GET", path)
+            response = self._request("GET", path, access_token=access_token, params=params)
             if response.status_code not in {429, 500, 502, 503}:
                 return response
             delay = self._jitter(retry_delay)
@@ -141,7 +164,68 @@ class SimklClient:
             if retry_after is not None:
                 delay = max(delay, retry_after)
             self._sleep(delay)
-        return self._request("GET", path)
+        return self._request("GET", path, access_token=access_token, params=params)
+
+    def get_json(
+        self,
+        path: str,
+        *,
+        access_token: str | None = None,
+        params: dict[str, str | int] | None = None,
+    ) -> Any:
+        return self.checked_json(self._get(path, access_token=access_token, params=params))
+
+    def post_json(
+        self,
+        path: str,
+        payload: object,
+        *,
+        access_token: str,
+        params: dict[str, str | int] | None = None,
+    ) -> Any:
+        response = self._request(
+            "POST", path, access_token=access_token, params=params, json_body=payload
+        )
+        if response.status_code in {429, 412} or _error_code(response) in {
+            "RATE_LIMIT",
+            "rate_limit",
+        }:
+            raise PostBlockedError(
+                "Simkl blocked this POST. Stop and verify your account before retrying."
+            )
+        return self.checked_json(response)
+
+    def write_state(
+        self,
+        path: str,
+        payload: object,
+        *,
+        access_token: str,
+        params: dict[str, str | int] | None = None,
+    ) -> dict[str, Any]:
+        result = self.post_json(path, payload, access_token=access_token, params=params)
+        if not isinstance(result, dict):
+            raise PartialWriteError("Malformed write response; outcome unknown.")
+        unmatched = result.get("not_found", {})
+        if not isinstance(unmatched, dict) or any(
+            not isinstance(v, list) for v in unmatched.values()
+        ):
+            raise PartialWriteError("Malformed partial-success data; outcome unknown.")
+        if any(unmatched.values()):
+            raise PartialWriteError("Simkl reported unmatched items; the write may be partial.")
+        if not isinstance(result.get("added", result.get("deleted")), dict):
+            raise PartialWriteError("Missing write result; outcome unknown.")
+        return result
+
+    @staticmethod
+    def checked_json(response: httpx.Response) -> Any:
+        if response.status_code == 401 and _error_code(response) == "user_token_failed":
+            raise InvalidAccessTokenError("The Access Token is invalid or revoked.")
+        response.raise_for_status()
+        payload = _json_payload(response, "Simkl returned malformed JSON.")
+        if isinstance(payload, dict) and payload.get("error"):
+            raise SimklResponseError(f"Simkl rejected the request: {payload['error']}.")
+        return payload
 
     def _request(
         self,
@@ -149,6 +233,8 @@ class SimklClient:
         path: str,
         *,
         access_token: str | None = None,
+        params: dict[str, str | int] | None = None,
+        json_body: object = None,
     ) -> httpx.Response:
         headers: dict[str, str] = {}
         if access_token is not None:
@@ -156,7 +242,13 @@ class SimklClient:
         if method == "POST":
             headers["Content-Type"] = "application/json"
         with self._rate_gate.limit(method, access_token):
-            return self._client.request(method, path, params=self._params, headers=headers)
+            return self._client.request(
+                method,
+                path,
+                params={**self._params, **(params or {})},
+                headers=headers,
+                json=json_body,
+            )
 
 
 def _nonempty_string(value: object) -> str:
@@ -196,5 +288,8 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
     try:
         delay = float(value)
     except ValueError:
-        return None
+        try:
+            return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+        except (TypeError, ValueError, OverflowError):
+            return None
     return max(0.0, delay)

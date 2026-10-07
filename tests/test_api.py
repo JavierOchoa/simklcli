@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import httpx
 import pytest
 
+from simklcli import __version__
 from simklcli.api import InvalidAccessTokenError, PinAuthorization, SimklClient, SimklResponseError
 from simklcli.storage import Account
 
@@ -46,10 +47,10 @@ def test_pin_authorization_request_includes_required_application_identity() -> N
         params={
             "client_id": "registered-client",
             "app-name": "simklcli",
-            "app-version": "0.1.0",
+            "app-version": __version__,
         },
     )
-    assert request.headers["user-agent"] == "simklcli/0.1.0"
+    assert request.headers["user-agent"] == f"simklcli/{__version__}"
 
 
 def test_approved_pin_returns_access_token_without_sending_it_as_input() -> None:
