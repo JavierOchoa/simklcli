@@ -25,6 +25,7 @@ jobs:
       - name: Exercise core loop and restore reserved Movie
         env:
           SIMKL_ACCESS_TOKEN: ${{ secrets.SIMKL_SMOKE_ACCESS_TOKEN }}
+          SIMKL_CLIENT_ID: ${{ vars.SIMKL_CLIENT_ID }}
           SIMKL_SMOKE_ACCOUNT_ID: ${{ vars.SIMKL_SMOKE_ACCOUNT_ID }}
           SIMKL_SMOKE_MEDIA_REFERENCE: ${{ vars.SIMKL_SMOKE_MEDIA_REFERENCE }}
         run: uv run python scripts/live_smoke.py

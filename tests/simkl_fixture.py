@@ -56,7 +56,14 @@ class SimklFixture:
             sleep=lambda _: None,
         )
         self.runtime.credentials.write(
-            access_token="test-token", account=Account(100, "Fixture"), source=CredentialSource.FILE
+            access_token="test-token",
+            account=Account(100, "Fixture"),
+            source=CredentialSource.FILE,
+            refresh_token="test-refresh-token",
+            expires_at=4102444800.0,
+            refresh_expires_at=4102444800.0,
+            client_id=self.runtime.client_id(),
+            scope="media:read media:write",
         )
 
     @property
@@ -108,6 +115,19 @@ class SimklFixture:
         assert request.headers["user-agent"].startswith("simklcli/")
         if path in self.overrides:
             return httpx.Response(200, json=self.overrides[path])
+        if path == "/oauth2/revoke":
+            return httpx.Response(200, json={})
+        if path == "/oauth2/token":
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "test-token",
+                    "refresh_token": "test-refresh-token",
+                    "expires_in": 604800,
+                    "token_type": "Bearer",
+                    "scope": "media:read media:write",
+                },
+            )
         if path == "/users/settings":
             return httpx.Response(
                 200, json={"account": {"id": 100, "type": self.plan}, "user": {"name": "Fixture"}}

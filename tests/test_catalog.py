@@ -11,7 +11,10 @@ from simklcli.media import MediaKind
 
 
 def catalog_with(handler: Any) -> Catalog:
-    return Catalog(SimklClient(client_id="test-app", transport=httpx.MockTransport(handler)))
+    return Catalog(
+        SimklClient(client_id="test-app", transport=httpx.MockTransport(handler)),
+        access_token="test-token",
+    )
 
 
 def test_redirect_resolution_does_not_follow_to_web_or_use_search_id() -> None:

@@ -2,7 +2,7 @@
 
 Status: build-ready
 
-Last updated: 2026-08-09
+Last updated: 2026-10-07
 
 This document consolidates the decisions resolved in GitHub issues #5–#12. The
 canonical vocabulary is in [`../CONTEXT.md`](../CONTEXT.md), architectural
@@ -81,8 +81,12 @@ Number, or a qualified TVDB/AniDB episode-level External ID.
 
 ## Authentication
 
-Use Simkl PIN Authorization exclusively for v1. Releases embed the public Simkl
-`client_id`, never a secret; development may override the registered app.
+Use AUTH V2 PIN Authorization exclusively for the v1 product. AUTH V1 is a
+separate, deprecated Simkl protocol. Local use requires a newly registered V2
+public `SIMKL_CLIENT_ID`; store the issuing client ID with the credential and
+reject mismatched overrides. Never ship a client secret. A public V2 app ID may
+be embedded once the maintainer registers it; do not reuse the removed V1 ID.
+See [ADR-0004](adr/0004-use-simkl-auth-v2.md) for the cutover decision.
 
 ### Login
 
@@ -91,10 +95,18 @@ Use Simkl PIN Authorization exclusively for v1. Releases embed the public Simkl
   `--no-open-browser` suppresses launch.
 - Honor the server-provided poll interval and expiry. Keep the code visible,
   show an interactive countdown or plain progress, and let Ctrl-C cancel.
+- Start with `POST /oauth2/device`, requesting `media:read media:write`.
+  Poll `POST /oauth2/token` with the private device code in the body. Show the
+  complete approval URL when available. Never display the device code.
+- Pending approval keeps the interval; `slow_down` adds five seconds. Stop
+  before the expiry deadline. The device flow does not use PKCE or a redirect.
+- Check both returned tokens, bearer type, expiry, and granted write scope.
 - After authorization, call `POST /users/settings` and validate the stable
   account ID and display name before persisting anything.
 - Support one Authenticated Account. Switching accounts requires logout, then
-  login.
+  login. Legacy V1 and invalidated or expired V2 grants may reconnect directly;
+  validate the same account ID before replacing credentials and retain its
+  Library Snapshot. Failed or cancelled reauthorization preserves prior state.
 
 ### Credential sources
 
@@ -106,6 +118,10 @@ Use Simkl PIN Authorization exclusively for v1. Releases embed the public Simkl
 - Default persistent storage is the OS keyring. If no usable keyring exists,
   fail with instructions for explicitly selecting plaintext-file storage; never
   silently downgrade.
+- Store both tokens as one atomic keyring value or in the explicitly chosen
+  plaintext file. Account metadata holds the client ID, scope, and token
+  expiries, but contains no keyring secrets. Read legacy credential schemas
+  for offline use and explicit reconnection only.
 - Plaintext storage uses the platform user-configuration directory, owner-only
   permissions where supported, and atomic replacement.
 
@@ -114,13 +130,21 @@ Use Simkl PIN Authorization exclusively for v1. Releases embed the public Simkl
 - `auth status` reports the locally recorded account and active credential source
   without network access; an explicit check validates the token and refreshes
   the display name.
-- Tokens are long-lived and have no refresh-token grant.
-- On confirmed `401 user_token_failed`, remove the nonempty persisted token and
-  account metadata, report it invalid or revoked, and require explicit login. Do
-  not remove an environment token.
-- Logout removes only local credentials, account metadata, and that account's
-  Library Snapshot. Explain that the remote token remains active and direct the
-  user to Simkl Connected Apps for revocation.
+- Access Tokens expire after seven days. Refresh within 60 seconds of expiry or
+  once after `401 user_token_failed`/`invalid_token`. Refresh Tokens are
+  non-rotating and have a sliding 180-day expiry. Lock, re-read shared state,
+  refresh only if another process has not done so, validate the account, and
+  atomically save before any tracking write. Environment overrides do not
+  borrow stored refresh credentials and require fresh externally supplied
+  Access Tokens after expiry.
+- Missing-token, client-registration, insufficient-scope, throttling, and
+  transport failures never trigger refresh. A rejected Refresh Token marks the
+  stored grant as requiring explicit login; keep account identity and the
+  Library Snapshot available offline. Local status never refreshes.
+- Logout removes local credentials, account metadata, and that account's
+  Library Snapshot, then best-effort requests V2 grant revocation. Report
+  acknowledgement rather than confirmed revocation; offer `--local-only` for
+  offline removal. Never revoke the environment override or a legacy V1 token.
 
 ## HTTP boundary and rate control
 
@@ -135,6 +159,10 @@ All traffic passes through one rate-control boundary.
 - Retry GET responses with 429, 500, 502, or 503 using jittered delays based on
   1, 2, 4, 8, and 16 seconds, honoring `Retry-After`, then fail.
 - Do not retry deterministic 400, 401, 403, 404, 409, or 412 responses.
+- The single AUTH V2 exception is a definitive invalid/expired-token 401:
+  after coordinated refresh, retry that rejected request once. This also
+  applies to a POST rejected before its operation; never retry on missing
+  credentials, transport loss, 5xx, partial success, or throttling.
 - Never blindly retry a POST after a timeout, connection loss, or 5xx where it
   may have applied. Stop immediately on an explicit POST throttle/block response.
 - Inspect Simkl's response bodies, including `error`, `not_found`, and partial
@@ -155,6 +183,10 @@ Offline writes fail; they are never queued or replayed. Claim that nothing
 changed only when the request definitely was not sent or a read confirms it.
 
 ## Catalog Metadata
+
+AUTH V2 search and External ID resolution require an Access Token. Known-ID
+summaries and Episode lists can be read anonymously. Ordinary commands report
+missing authorization and never start PIN Authorization implicitly.
 
 Do not persist Catalog Metadata in v1. Reuse within one command is allowed, but
 later invocations fetch it afresh. Library Display Identity inside a Library

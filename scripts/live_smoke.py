@@ -19,7 +19,7 @@ def run_smoke(runtime: Runtime, reference: str, expected_account_id: int, receip
     credential = runtime.active_credential()
     if credential is None:
         raise ValueError("The dedicated smoke account needs SIMKL_ACCESS_TOKEN.")
-    api = runtime.api_client()
+    credential, api = runtime.authenticated_client()
     account = api.get_authenticated_account(credential.access_token)
     if account.id != positive_int(expected_account_id):
         raise ValueError(

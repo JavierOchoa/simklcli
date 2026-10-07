@@ -41,11 +41,19 @@ def test_environment_account_is_validated_and_cannot_borrow_shadowed_identity(
     tmp_path: Path,
 ) -> None:
     server = SimklFixture(tmp_path)
-    server.runtime.environ = {"SIMKL_ACCESS_TOKEN": "test-token"}
+    server.runtime.environ = {
+        "SIMKL_CLIENT_ID": "test-v2-client",
+        "SIMKL_ACCESS_TOKEN": "test-token",
+    }
     server.runtime.credentials.write(
         access_token="other-stored-token",
         account=Account(200, "Other"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=server.runtime.client_id(),
+        scope="media:read media:write",
     )
     assert invoke(server, "library", "list")["items"] == []
     assert server.runtime.snapshots.path(100).exists()
@@ -60,7 +68,10 @@ def test_environment_account_is_validated_and_cannot_borrow_shadowed_identity(
 def test_environment_offline_reads_can_use_the_same_persisted_credential(tmp_path: Path) -> None:
     server = SimklFixture(tmp_path)
     invoke(server, "library", "list")
-    server.runtime.environ = {"SIMKL_ACCESS_TOKEN": "test-token"}
+    server.runtime.environ = {
+        "SIMKL_CLIENT_ID": "test-v2-client",
+        "SIMKL_ACCESS_TOKEN": "test-token",
+    }
     before = len(server.requests)
     invoke(server, "library", "list", "--offline")
     assert len(server.requests) == before
@@ -76,7 +87,10 @@ def test_missing_credentials_never_start_pin_authorization(tmp_path: Path) -> No
 
 def test_invalid_environment_token_keeps_shadowed_credentials(tmp_path: Path) -> None:
     server = SimklFixture(tmp_path)
-    server.runtime.environ = {"SIMKL_ACCESS_TOKEN": "test-token"}
+    server.runtime.environ = {
+        "SIMKL_CLIENT_ID": "test-v2-client",
+        "SIMKL_ACCESS_TOKEN": "test-token",
+    }
     server.runtime.transport = httpx.MockTransport(
         lambda request: httpx.Response(401, json={"error": "user_token_failed"})
     )

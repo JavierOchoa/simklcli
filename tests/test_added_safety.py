@@ -63,14 +63,21 @@ def test_unexpected_episode_preservation_failure_reports_captured_state(tmp_path
 def test_auth_login_json_keeps_pin_progress_on_stderr_and_result_on_stdout(tmp_path: Path) -> None:
     server = SimklFixture(tmp_path)
     server.runtime.credentials.delete()
-    server.overrides["/oauth/pin"] = {
+    server.overrides["/oauth2/device"] = {
         "result": "OK",
         "user_code": "ABCDE",
-        "verification_url": "https://simkl.com/pin",
+        "device_code": "DEVICE_CODE",
+        "verification_uri": "https://simkl.com/pin",
         "expires_in": 900,
         "interval": 5,
     }
-    server.overrides["/oauth/pin/ABCDE"] = {"result": "OK", "access_token": "test-token"}
+    server.overrides["/oauth2/token"] = {
+        "access_token": "test-token",
+        "refresh_token": "refresh-secret",
+        "expires_in": 604800,
+        "token_type": "Bearer",
+        "scope": "media:read media:write",
+    }
     result = CliRunner().invoke(
         create_app(lambda: server.runtime), ["auth", "login", "--storage", "file", "--json"]
     )
@@ -85,12 +92,16 @@ def test_auth_login_json_errors_emit_one_payload(tmp_path: Path, mode: str) -> N
     server.runtime.credentials.delete()
     args = ["auth", "login", "--json"]
     if mode == "environment":
-        server.runtime.environ = {"SIMKL_ACCESS_TOKEN": "test-token"}
+        server.runtime.environ = {
+            "SIMKL_CLIENT_ID": "test-v2-client",
+            "SIMKL_ACCESS_TOKEN": "test-token",
+        }
     elif mode == "cancel":
-        server.overrides["/oauth/pin"] = {
+        server.overrides["/oauth2/device"] = {
             "result": "OK",
             "user_code": "ABCDE",
-            "verification_url": "https://simkl.com/pin",
+            "device_code": "DEVICE_CODE",
+            "verification_uri": "https://simkl.com/pin",
             "expires_in": 900,
             "interval": 5,
         }
@@ -136,7 +147,7 @@ def test_successful_write_then_revocation_reports_remote_success(tmp_path: Path)
     )
     assert result.exit_code == 1
     assert json.loads(result.stdout)["remote_success"] is True
-    assert server.runtime.credentials.read() is None
+    assert server.runtime.credentials.read().invalidated  # type: ignore[union-attr]
 
 
 def test_failed_snapshot_write_keeps_remote_success_and_dirty_marker(

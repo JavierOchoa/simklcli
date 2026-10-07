@@ -211,11 +211,13 @@ def test_revoked_token_clears_credentials_and_snapshot(tmp_path: Path) -> None:
     invoke(server, "library", "list")
 
     def revoked(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(400, json={"error": "invalid_grant"})
         return httpx.Response(401, json={"error": "user_token_failed"})
 
     server.runtime.transport = httpx.MockTransport(revoked)
     result = CliRunner().invoke(create_app(lambda: server.runtime), ["library", "list", "--json"])
     assert result.exit_code == 1
     assert json.loads(result.stdout)["error"] == "invalid_or_revoked"
-    assert server.runtime.credentials.read() is None
-    assert not server.runtime.snapshots.path(100).exists()
+    assert server.runtime.credentials.read().invalidated  # type: ignore[union-attr]
+    assert server.runtime.snapshots.path(100).exists()

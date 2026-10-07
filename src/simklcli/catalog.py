@@ -42,8 +42,9 @@ class SearchResults:
 
 
 class Catalog:
-    def __init__(self, api: SimklClient) -> None:
+    def __init__(self, api: SimklClient, access_token: str | None = None) -> None:
         self.api = api
+        self.access_token = access_token or api.access_token
 
     def search(
         self,
@@ -56,12 +57,17 @@ class Catalog:
     ) -> SearchResults:
         if not query.strip():
             raise ValueError("Search query cannot be empty.")
+        if self.access_token is None:
+            raise SimklResponseError(
+                "AUTH V2 search requires sign-in. Run simkl auth login explicitly."
+            )
         items = []
         more = False
         for selected in [kind] if kind is not None else list(MediaKind):
             response = self.api._get(
                 f"/search/{'tv' if selected is MediaKind.SHOW else selected.value}",
                 params={"q": query, "limit": limit, "page": page, "extended": "full"},
+                access_token=self.access_token,
             )
             rows = self.api.checked_json(response)
             if not isinstance(rows, list):
@@ -78,7 +84,11 @@ class Catalog:
         return SearchResults(items, page + 1 if more and page < 20 else None)
 
     def details(self, media_id: int, kind: MediaKind) -> Media:
-        payload = self.api.get_json(f"/{kind.endpoint}/{media_id}", params={"extended": "full"})
+        payload = self.api.get_json(
+            f"/{kind.endpoint}/{media_id}",
+            params={"extended": "full"},
+            access_token=self.access_token,
+        )
         if not payload:
             raise ValueError(f"No {kind.value} found for Simkl ID {media_id}.")
         try:
@@ -118,7 +128,12 @@ class Catalog:
         params: dict[str, str | int] = {provider: value}
         if kind is not None:
             params["type"] = "tv" if kind is MediaKind.SHOW else kind.value
-        response = self.api._get("/redirect", params=params)
+        if self.access_token is None:
+            raise SimklResponseError(
+                "AUTH V2 reference resolution requires sign-in; use a Simkl ID with --kind "
+                "for an anonymous lookup, or run simkl auth login explicitly."
+            )
+        response = self.api._get("/redirect", params=params, access_token=self.access_token)
         if response.status_code not in {301, 302}:
             self.api.checked_json(response)
             raise ValueError("Simkl could not resolve this Media Reference.")
@@ -144,7 +159,9 @@ class Catalog:
         return self.details(media_id, resolved_kind)
 
     def episodes(self, item: Media) -> list[dict[str, Any]]:
-        rows = self.api.get_json(f"/{item.kind.endpoint}/episodes/{item.simkl_id}")
+        rows = self.api.get_json(
+            f"/{item.kind.endpoint}/episodes/{item.simkl_id}", access_token=self.access_token
+        )
         if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
             raise SimklResponseError("Malformed catalog episode response.")
         return rows

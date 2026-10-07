@@ -20,6 +20,26 @@ uv tool install simklcli
 
 ## Authentication
 
+Register an **AUTH V2** application as **TV, devices & command line** at
+[Simkl Developer Settings](https://simkl.com/settings/developer/). For local use,
+set its public client ID before the first login:
+
+```sh
+export SIMKL_CLIENT_ID='your-v2-client-id'
+uv sync --locked
+uv run simkl auth login
+uv run simkl auth status --check
+uv run simkl search "Cowboy Bebop" --kind anime
+uv run simkl library list
+uv run simkl library list --offline
+```
+
+Login uses the V2 device-based PIN Authorization flow. Open the printed link
+and approve the application on Simkl; no client secret, redirect URL, or PKCE
+parameters are used by this flow. The V2 app ID is stored with its credential,
+so later invocations can use it without the environment variable. An override
+must match the app that issued the stored tokens.
+
 ```sh
 simkl auth login
 simkl auth status
@@ -27,12 +47,30 @@ simkl auth status --check
 simkl auth logout
 ```
 
-Login uses Simkl PIN Authorization and stores one Access Token in the OS
-keyring. If the platform has no usable keyring, plaintext storage must be
+Login stores the Access Token and Refresh Token together in the OS keyring.
+If the platform has no usable keyring, plaintext storage must be
 selected explicitly with `simkl auth login --storage file`. Set
 `SIMKL_ACCESS_TOKEN` for a non-persisted automation override; it takes
-precedence over local credentials. `SIMKL_CLIENT_ID` may override the embedded
-public client ID during development.
+precedence over local credentials and requires its issuing V2 `SIMKL_CLIENT_ID`.
+Environment overrides are not refreshed or persisted; supply a fresh Access
+Token when it expires. The old embedded V1 client ID has been removed.
+
+Access Tokens last seven days; the CLI refreshes shortly before expiry or once
+after an explicit token rejection. Refresh Tokens last 180 days with sliding
+expiry. Refresh and storage changes share an account lock across processes.
+Search and External ID resolution require sign-in. An anonymous known-ID lookup
+is available with `simkl lookup simkl:<id> --kind movie|show|anime`.
+
+An existing V1 account reconnects through `simkl auth login` without first
+logging out: approval must match the recorded account, and its Library Snapshot
+is retained. A failed or cancelled login preserves the existing credentials.
+Expired or revoked grants require explicit login and keep offline snapshots.
+See the [migration guide](docs/auth-v2-migration.md) for local verification.
+
+Logout removes local credentials and the Library Snapshot and makes a
+best-effort request to revoke the stored V2 grant. `--local-only` skips that
+request. Simkl acknowledges revocation without revealing whether a token was
+valid; the CLI reports acknowledgement rather than proof of revocation.
 
 Use `simkl auth status --json` for a single machine-readable stdout payload.
 The default status check is local-only; `--check` explicitly validates the

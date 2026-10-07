@@ -9,9 +9,14 @@ Configure the external accounts once before attempting the first release.
 Create the `simkl-smoke` GitHub environment with:
 
 - secret `SIMKL_SMOKE_ACCESS_TOKEN`: a token for this registered application
-  on a dedicated Simkl account;
+  on a dedicated Simkl account, freshly issued by AUTH V2 with read/write scope;
+- variable `SIMKL_CLIENT_ID`: that token's issuing public V2 app ID;
 - variable `SIMKL_SMOKE_ACCOUNT_ID`: that account's stable numeric Simkl ID;
 - variable `SIMKL_SMOKE_MEDIA_REFERENCE`: `simkl:<id>` for a reserved Movie.
+
+The environment Access Token override does not auto-refresh. Replace it with a
+freshly authorized V2 token when it expires (seven days). Local account setup
+and testing are described in [auth-v2-migration.md](auth-v2-migration.md).
 
 The Movie must have no Rewatch sessions; use a clean reserved item on the
 dedicated account. The smoke refuses a mismatched account, unknown original

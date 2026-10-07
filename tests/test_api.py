@@ -38,12 +38,13 @@ def test_pin_authorization_request_includes_required_application_identity() -> N
         verification_url="https://simkl.com/pin",
         expires_in=900,
         interval=5,
+        device_code="DEVICE_CODE",
     )
     assert len(seen) == 1
     request = seen[0]
-    assert request.method == "GET"
+    assert request.method == "POST"
     assert request.url == httpx.URL(
-        "https://api.simkl.com/oauth/pin",
+        "https://api.simkl.com/oauth2/device",
         params={
             "client_id": "registered-client",
             "app-name": "simklcli",
@@ -55,13 +56,27 @@ def test_pin_authorization_request_includes_required_application_identity() -> N
 
 def test_approved_pin_returns_access_token_without_sending_it_as_input() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/oauth/pin/ABCDE"
+        assert request.url.path == "/oauth2/token"
         assert "authorization" not in request.headers
-        return httpx.Response(200, json={"result": "OK", "access_token": "secret-token"})
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "secret-token",
+                "refresh_token": "refresh-secret",
+                "expires_in": 604800,
+                "token_type": "Bearer",
+                "scope": "media:read media:write",
+            },
+        )
 
     client = SimklClient(client_id="registered-client", transport=httpx.MockTransport(handler))
 
-    assert client.poll_pin_authorization("ABCDE") == "secret-token"
+    assert (
+        client.poll_pin_authorization(
+            PinAuthorization("ABCDE", "https://simkl.com/pin", 900, 5, "DEVICE_CODE")
+        )
+        or pytest.fail("Missing token pair")
+    ).access_token == "secret-token"
 
 
 def test_account_validation_uses_authenticated_settings_request() -> None:
@@ -113,7 +128,7 @@ def test_get_retries_throttling_with_retry_after_delay() -> None:
         jitter=lambda delay: delay,
     )
 
-    client.start_pin_authorization()
+    client.get_json("/movies/1")
 
     assert attempts == 2
     assert sleeps == [3.0]
@@ -132,10 +147,10 @@ def test_malformed_pin_json_is_reported_as_a_simkl_response_error() -> None:
 def test_pending_and_expired_pin_responses_are_distinct() -> None:
     responses = iter(
         [
-            httpx.Response(200, json={"result": "KO", "message": "pending"}),
+            httpx.Response(400, json={"error": "authorization_pending"}),
             httpx.Response(
-                200,
-                json={"result": "OK", "device_code": "DEVICE_CODE", "user_code": "NEWER"},
+                400,
+                json={"error": "expired_token"},
             ),
         ]
     )
@@ -144,9 +159,16 @@ def test_pending_and_expired_pin_responses_are_distinct() -> None:
         transport=httpx.MockTransport(lambda request: next(responses)),
     )
 
-    assert client.poll_pin_authorization("ABCDE") is None
+    assert (
+        client.poll_pin_authorization(
+            PinAuthorization("ABCDE", "https://simkl.com/pin", 900, 5, "DEVICE_CODE")
+        )
+        is None
+    )
     with pytest.raises(SimklResponseError, match="expired or is no longer valid"):
-        client.poll_pin_authorization("ABCDE")
+        client.poll_pin_authorization(
+            PinAuthorization("ABCDE", "https://simkl.com/pin", 900, 5, "DEVICE_CODE")
+        )
 
 
 def test_confirmed_user_token_failure_has_a_specific_error() -> None:
@@ -197,7 +219,7 @@ def test_every_request_passes_through_the_rate_control_boundary() -> None:
     client.start_pin_authorization()
     client.get_authenticated_account("secret-token")
 
-    assert gate.calls == [("GET", None), ("POST", "secret-token")]
+    assert gate.calls == [("POST", None), ("POST", "secret-token")]
 
 
 @pytest.mark.parametrize(
@@ -244,8 +266,10 @@ def test_invalid_pin_poll_shapes_fail_without_guessing(payload: object) -> None:
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload)),
     )
 
-    with pytest.raises(SimklResponseError, match="malformed PIN poll"):
-        client.poll_pin_authorization("ABCDE")
+    with pytest.raises(SimklResponseError, match="malformed token response"):
+        client.poll_pin_authorization(
+            PinAuthorization("ABCDE", "https://simkl.com/pin", 900, 5, "DEVICE_CODE")
+        )
 
 
 @pytest.mark.parametrize(
@@ -279,6 +303,6 @@ def test_get_exhausts_documented_retry_schedule_then_fails() -> None:
     )
 
     with pytest.raises(httpx.HTTPStatusError):
-        client.start_pin_authorization()
+        client.get_json("/movies/1")
 
     assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0]

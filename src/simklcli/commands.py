@@ -6,6 +6,7 @@ import json
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
+from dataclasses import replace
 from typing import Annotated, Any
 
 import httpx
@@ -88,7 +89,10 @@ def _tracking(runtime: Runtime, *, offline: bool = False) -> Tracking:
         raise ValueError("No Access Token is available. Run simkl auth login explicitly.")
     account = credential.account
     account_id = account.id if account is not None else None
-    api = runtime.api_client()
+    if offline:
+        api = runtime.api_client()
+    else:
+        credential, api = runtime.authenticated_client()
     if credential.source is CredentialSource.ENVIRONMENT:
         if offline:
             account_id = runtime.identity_gate().remembered_account_id(credential.access_token)
@@ -109,18 +113,24 @@ def _tracking(runtime: Runtime, *, offline: bool = False) -> Tracking:
     if runtime.rate_gate is not None:
         runtime.rate_gate.bind_account(credential.access_token, account_id)
     return Tracking(
-        api, runtime.snapshots, account_id=account_id, access_token=credential.access_token
+        api,
+        runtime.snapshots,
+        account_id=account_id,
+        access_token=api.access_token or credential.access_token,
     )
 
 
 def _invalidate(runtime: Runtime) -> None:
     credential = runtime.active_credential()
     if credential is not None and credential.source is not CredentialSource.ENVIRONMENT:
-        if credential.account is not None:
-            with runtime.snapshots.reversible_delete(credential.account.id):
-                runtime.credentials.delete()
-        else:
-            runtime.credentials.delete()
+        runtime.credentials.save(replace(credential, invalidated=True))
+
+
+def _catalog(runtime: Runtime) -> Catalog:
+    if runtime.active_credential() is None:
+        return Catalog(runtime.api_client())
+    _, api = runtime.authenticated_client()
+    return Catalog(api)
 
 
 def _run(
@@ -215,16 +225,14 @@ def register_commands(app: typer.Typer, runtime_factory: Callable[[], Runtime]) 
         """Search the catalog for candidate Media Items."""
 
         def action(runtime: Runtime) -> dict[str, Any]:
-            results = Catalog(runtime.api_client()).search(
-                query, kind=kind, year=year, limit=limit, page=page
-            )
+            results = _catalog(runtime).search(query, kind=kind, year=year, limit=limit, page=page)
             return {
                 "query": query,
                 "results": [i.identity() for i in results.items],
                 "next_page": results.next_page,
             }
 
-        _run(runtime_factory, json_output, action)
+        _run(runtime_factory, json_output, action, authenticated=True)
 
     @app.command()
     def lookup(
@@ -236,12 +244,10 @@ def register_commands(app: typer.Typer, runtime_factory: Callable[[], Runtime]) 
         """Resolve a Media Reference and fetch current Catalog Metadata."""
 
         def action(runtime: Runtime) -> dict[str, Any]:
-            item = _resolve(
-                runtime, Catalog(runtime.api_client()), reference, kind, year, json_output
-            )
+            item = _resolve(runtime, _catalog(runtime), reference, kind, year, json_output)
             return {"item": item.identity(), "metadata": item.metadata}
 
-        _run(runtime_factory, json_output, action)
+        _run(runtime_factory, json_output, action, authenticated=True)
 
     @library.command("list")
     def library_list(

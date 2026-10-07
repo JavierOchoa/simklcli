@@ -13,7 +13,10 @@ def test_environment_only_account_can_read_its_snapshot_offline_without_persisti
 ) -> None:
     server = SimklFixture(tmp_path)
     server.runtime.credentials.delete()
-    server.runtime.environ = {"SIMKL_ACCESS_TOKEN": "test-token"}
+    server.runtime.environ = {
+        "SIMKL_CLIENT_ID": "test-v2-client",
+        "SIMKL_ACCESS_TOKEN": "test-token",
+    }
     server.put(1, rating=8)
     invoke(server, "library", "list")
     count = len(server.requests)
@@ -30,7 +33,10 @@ def test_unvalidated_environment_token_cannot_borrow_another_accounts_snapshot(
 ) -> None:
     server = SimklFixture(tmp_path)
     invoke(server, "library", "list")
-    server.runtime.environ = {"SIMKL_ACCESS_TOKEN": "different-token"}
+    server.runtime.environ = {
+        "SIMKL_CLIENT_ID": "test-v2-client",
+        "SIMKL_ACCESS_TOKEN": "different-token",
+    }
     result = CliRunner().invoke(
         create_app(lambda: server.runtime), ["library", "list", "--offline", "--json"]
     )
