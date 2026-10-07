@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from contextlib import nullcontext
+from dataclasses import replace
 from enum import StrEnum
 from typing import Annotated
 
@@ -9,7 +10,15 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
-from simklcli.api import InvalidAccessTokenError, SimklResponseError
+from simklcli.api import (
+    InvalidAccessTokenError,
+    PollSlowDown,
+    SimklClient,
+    SimklResponseError,
+    TokenPair,
+)
+from simklcli.commands import register_commands
+from simklcli.output import JsonGroup
 from simklcli.runtime import Runtime, default_runtime
 from simklcli.storage import Account, CredentialSource, CredentialStorageError
 
@@ -28,8 +37,16 @@ def _complete_pin_authorization(
     credential_source: CredentialSource,
     *,
     no_open_browser: bool,
+    json_output: bool = False,
 ) -> Account:
-    if runtime.credentials.read() is not None:
+    previous = runtime.credentials.read()
+    previous_account = runtime.credentials.read_account()
+    if (
+        previous is not None
+        and not previous.legacy
+        and not previous.invalidated
+        and (previous.refresh_expires_at is None or previous.refresh_expires_at > runtime.clock())
+    ):
         raise AuthenticationStateError(
             "An Authenticated Account is already stored. "
             "Run simkl auth logout before switching accounts."
@@ -37,43 +54,63 @@ def _complete_pin_authorization(
     runtime.credentials.ensure_available(credential_source)
     api = runtime.api_client()
     pin = api.start_pin_authorization()
-    Console().print(
+    Console(stderr=json_output).print(
         Panel(
-            f"Open {pin.verification_url} and enter "
+            f"Open {pin.verification_url_complete or pin.verification_url}\n"
+            f"Or open {pin.verification_url} and enter "
             f"[bold cyan]{pin.user_code}[/bold cyan]\n"
             f"Expires in {pin.expires_in} seconds · poll every {pin.interval} seconds",
             title="PIN Authorization",
         )
     )
-    if not no_open_browser and runtime.interactive:
+    if not no_open_browser and runtime.interactive and not json_output:
         try:
-            runtime.open_browser(pin.verification_url)
+            runtime.open_browser(pin.verification_url_complete or pin.verification_url)
         except Exception:
             Console(stderr=True).print(
                 "[yellow]Could not open a browser; continue with the URL above.[/yellow]"
             )
     deadline = runtime.monotonic() + pin.expires_in
-    token: str | None = None
-    while token is None:
+    pair: TokenPair | None = None
+    interval = pin.interval
+    while pair is None:
         remaining = deadline - runtime.monotonic()
         if remaining <= 0:
             raise SimklResponseError("PIN Authorization expired before approval.")
-        runtime.sleep(min(float(pin.interval), remaining))
-        token = api.poll_pin_authorization(pin.user_code)
-        if token is None:
+        runtime.sleep(min(float(interval), remaining))
+        if runtime.monotonic() >= deadline:
+            raise SimklResponseError("PIN Authorization expired before approval.")
+        try:
+            pair = api.poll_pin_authorization(pin)
+        except PollSlowDown:
+            interval += 5
+        if pair is None:
             remaining_seconds = max(0, int(deadline - runtime.monotonic()))
-            Console().print(f"Waiting for approval… {remaining_seconds}s remaining")
-    account = api.get_authenticated_account(token)
+            Console(stderr=json_output).print(
+                f"Waiting for approval… {remaining_seconds}s remaining"
+            )
+    account = api.get_authenticated_account(pair.access_token)
+    if previous_account is not None and account.id != previous_account.id:
+        raise AuthenticationStateError(
+            "Authorization belongs to a different account. Existing credentials and Library "
+            "Snapshot were retained; log out explicitly before switching accounts."
+        )
     runtime.credentials.write(
-        access_token=token,
+        access_token=pair.access_token,
         account=account,
         source=credential_source,
+        refresh_token=pair.refresh_token,
+        expires_at=pair.expires_at,
+        refresh_expires_at=pair.refresh_expires_at,
+        client_id=runtime.client_id(),
+        scope=pair.scope,
     )
     return account
 
 
 def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> typer.Typer:
     app = typer.Typer(
+        cls=JsonGroup,
         name="simkl",
         help="Track movies, shows, and anime on Simkl.",
         no_args_is_help=True,
@@ -98,11 +135,14 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
             CredentialStorage,
             typer.Option(help="Credential storage; file must be chosen explicitly."),
         ] = CredentialStorage.KEYRING,
+        json_output: Annotated[bool, typer.Option("--json", help="Emit one JSON result.")] = False,
     ) -> None:
         """Start Simkl PIN Authorization."""
         runtime = runtime_factory()
         credential_source = CredentialSource(storage.value)
         if runtime.environ.get("SIMKL_ACCESS_TOKEN", "").strip():
+            if json_output:
+                typer.echo(json.dumps({"error": "environment_override_active"}))
             Console(stderr=True).print(
                 "[red]SIMKL_ACCESS_TOKEN is active.[/red] Remove it before persistent login; "
                 "a stored credential would be shadowed."
@@ -114,8 +154,11 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
                     runtime,
                     credential_source,
                     no_open_browser=no_open_browser,
+                    json_output=json_output,
                 )
         except KeyboardInterrupt:
+            if json_output:
+                typer.echo(json.dumps({"error": "cancelled"}))
             Console(stderr=True).print(
                 "[yellow]PIN Authorization cancelled; nothing was stored.[/yellow]"
             )
@@ -127,8 +170,21 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
             httpx.HTTPError,
             OSError,
         ) as exc:
+            if json_output:
+                typer.echo(json.dumps({"error": "login_failed", "message": str(exc)}))
             Console(stderr=True).print(f"[red]{exc}[/red]")
             raise typer.Exit(1) from None
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "authenticated": True,
+                        "account": {"id": account.id, "name": account.name},
+                        "credential_source": storage.value,
+                    }
+                )
+            )
+            return
         Console().print(
             Panel(
                 f"{account.name} · account {account.id}\nCredential source: {storage.value}",
@@ -182,11 +238,27 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
             )
             raise typer.Exit(1)
         account = credential.account
+        if not check and (credential.legacy or credential.invalidated):
+            payload = {
+                "authenticated": False,
+                "account": {"id": account.id, "name": account.name} if account else None,
+                "credential_source": credential.source.value,
+                "checked_online": False,
+                "requires_login": True,
+                "auth_version": 1 if credential.legacy else 2,
+            }
+            if json_output:
+                typer.echo(json.dumps(payload))
+            else:
+                Console().print(
+                    "AUTH V2 authorization required. Run simkl auth login; "
+                    "your Library Snapshot is retained."
+                )
+            raise typer.Exit(1)
         if check:
             try:
-                checked_account = runtime.api_client().get_authenticated_account(
-                    credential.access_token
-                )
+                credential, api = runtime.authenticated_client()
+                checked_account = api.get_authenticated_account(credential.access_token)
                 if (
                     credential.source is not CredentialSource.ENVIRONMENT
                     and account is not None
@@ -197,19 +269,13 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
                     )
                 account = checked_account
                 if credential.source is not CredentialSource.ENVIRONMENT:
-                    runtime.credentials.write(
-                        access_token=credential.access_token,
-                        account=checked_account,
-                        source=credential.source,
-                    )
+                    current = runtime.credentials.read() or credential
+                    runtime.credentials.save(replace(current, account=checked_account))
             except InvalidAccessTokenError as exc:
                 if credential.source is not CredentialSource.ENVIRONMENT:
                     try:
-                        if credential.account is None:
-                            runtime.credentials.delete()
-                        else:
-                            with runtime.snapshots.reversible_delete(credential.account.id):
-                                runtime.credentials.delete()
+                        current = runtime.credentials.read() or credential
+                        runtime.credentials.save(replace(current, invalidated=True))
                     except (CredentialStorageError, OSError) as cleanup_error:
                         if json_output:
                             typer.echo(
@@ -231,7 +297,7 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
                 message = (
                     f"{exc} The environment variable was not removed."
                     if credential.source is CredentialSource.ENVIRONMENT
-                    else f"{exc} Local credentials were removed; run simkl auth login."
+                    else f"{exc} Run simkl auth login; the Library Snapshot was retained."
                 )
                 if json_output:
                     typer.echo(
@@ -335,14 +401,21 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
             bool,
             typer.Option("--yes", "-y", help="Confirm local credential deletion."),
         ] = False,
+        json_output: Annotated[bool, typer.Option("--json", help="Emit one JSON result.")] = False,
+        local_only: Annotated[
+            bool, typer.Option(help="Remove local credentials without remote revocation.")
+        ] = False,
     ) -> None:
-        """Delete local credentials; remote authorization remains active."""
+        """Remove local credentials and request revocation of the stored V2 grant."""
         runtime = runtime_factory()
         environment_active = bool(runtime.environ.get("SIMKL_ACCESS_TOKEN", "").strip())
+        credential = None
         try:
             with runtime.credentials.account_transaction():
                 account = runtime.credentials.read_account()
                 if account is None:
+                    if json_output:
+                        typer.echo(json.dumps({"error": "no_local_credentials"}))
                     if environment_active:
                         Console(stderr=True).print(
                             "[yellow]SIMKL_ACCESS_TOKEN is active and cannot be removed by "
@@ -353,30 +426,70 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
                             "[yellow]No local credentials are stored.[/yellow]"
                         )
                     raise typer.Exit(1)
+                if not yes and (json_output or not runtime.interactive):
+                    raise AuthenticationStateError("Noninteractive logout requires --yes.")
                 if not yes and not typer.confirm(
-                    "Delete the local Access Token, account metadata, and Library Snapshot?"
+                    "Delete local credentials and Library Snapshot, and request V2 revocation?"
                 ):
                     raise typer.Abort()
+                credential = runtime.credentials.read()
                 with runtime.snapshots.reversible_delete(account.id):
                     runtime.credentials.delete()
         except KeyboardInterrupt:
+            if json_output:
+                typer.echo(json.dumps({"error": "cancelled"}))
             Console(stderr=True).print(
                 "[yellow]Logout cancelled; local credentials and snapshot were preserved.[/yellow]"
             )
             raise typer.Exit(130) from None
-        except (CredentialStorageError, OSError) as exc:
+        except (AuthenticationStateError, CredentialStorageError, OSError) as exc:
+            if json_output:
+                typer.echo(json.dumps({"error": "logout_failed", "message": str(exc)}))
             Console(stderr=True).print(f"[red]{exc}[/red]")
             raise typer.Exit(1) from None
-        Console().print(
-            "Local credentials, account metadata, and Library Snapshot were removed. "
-            "The remote Access Token remains active; revoke it in Simkl Connected Apps if needed."
+        acknowledged = False
+        if credential is not None and credential.client_id and not local_only:
+            try:
+                SimklClient(
+                    client_id=credential.client_id,
+                    transport=runtime.transport,
+                    sleep=runtime.sleep,
+                    rate_gate=runtime.rate_gate,
+                ).revoke_token(credential.refresh_token or credential.access_token)
+                acknowledged = True
+            except (SimklResponseError, httpx.HTTPError, OSError, KeyboardInterrupt):
+                Console(stderr=True).print(
+                    "Local logout completed, but remote revocation was not acknowledged. "
+                    "Disconnect this grant in Simkl Connected Apps if needed."
+                )
+        message = "Local credentials, account metadata, and Library Snapshot were removed. " + (
+            "Simkl acknowledged the revocation request; its response does not prove "
+            "which token was revoked."
+            if acknowledged
+            else "The remote Access Token remains active or unverified; revoke it in "
+            "Simkl Connected Apps if needed."
         )
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "logged_out": True,
+                        "remote_token_revoked": False,
+                        "remote_revocation_acknowledged": acknowledged,
+                        "environment_override_active": environment_active,
+                        "message": message,
+                    }
+                )
+            )
+        else:
+            Console().print(message)
         if environment_active:
             Console(stderr=True).print(
                 "[yellow]SIMKL_ACCESS_TOKEN is still active and cannot be removed by "
                 "logout.[/yellow]"
             )
 
+    register_commands(app, runtime_factory)
     return app
 
 

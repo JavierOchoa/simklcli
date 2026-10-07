@@ -810,7 +810,7 @@ requires-dist = [
     { name = "keyring", specifier = ">=25,<26" },
     { name = "platformdirs", specifier = ">=4.3,<5" },
     { name = "rich", specifier = ">=14,<15" },
-    { name = "typer", specifier = ">=0.16,<1" },
+    { name = "typer", specifier = ">=0.27,<1" },
 ]
 
 [package.metadata.requires-dev]

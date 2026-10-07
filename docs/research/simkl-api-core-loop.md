@@ -4,6 +4,11 @@ Factual findings for the simklcli core loop (auth, search/lookup, mark-as-watche
 
 **Date:** 2026-08-05
 
+**Authentication update (2026-10-07):** this is the historical AUTH V1 research
+baseline. Its long-lived-token, PIN endpoint, and anonymous-search assumptions
+are superseded by [ADR-0004](../adr/0004-use-simkl-auth-v2.md), the current
+[build specification](../spec.md), and the [V2 migration guide](../auth-v2-migration.md).
+
 **Sources consulted:**
 
 - https://api.simkl.org/llms-full.txt (full doc site flattened, ~15k lines — primary source for everything below)

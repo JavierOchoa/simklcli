@@ -5,12 +5,16 @@ The language used by `simkl` to describe catalog media and a user's relationship
 ## Authentication
 
 **PIN Authorization**:
-The interactive Simkl authorization process in which the CLI displays a short code, the user approves it on Simkl's website, and the CLI receives an Access Token.
+The interactive AUTH V2 authorization process in which the CLI displays a short code and approval link, the user approves it on Simkl's website, and the CLI receives an Access Token and Refresh Token.
 _Avoid_: Device Flow, OAuth Device Flow
 
 **Access Token**:
-The long-lived bearer credential authorizing the CLI to act for one Simkl account; Simkl provides no refresh token.
+The short-lived bearer credential authorizing the CLI to act for one Simkl account and registered app. AUTH V2 Access Tokens expire after seven days.
 _Avoid_: Session Token, API Key
+
+**Refresh Token**:
+The secret paired with an Access Token that renews authorization for the same account and app. Refresh replaces the Access Token and extends the Refresh Token's 180-day expiry; the Refresh Token itself does not rotate.
+_Avoid_: Permanent Token, API Key
 
 **Authenticated Account**:
 A Simkl account for which the CLI currently has an Access Token, identified by its stable Simkl account ID and display name.

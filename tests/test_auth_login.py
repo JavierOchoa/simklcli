@@ -23,15 +23,24 @@ def test_login_polls_at_server_interval_validates_account_then_persists(tmp_path
                     "result": "OK",
                     "device_code": "DEVICE_CODE",
                     "user_code": "ABCDE",
-                    "verification_url": "https://simkl.com/pin",
+                    "verification_uri": "https://simkl.com/pin",
                     "expires_in": 15,
                     "interval": 5,
                 },
             )
         if calls == 2:
-            return httpx.Response(200, json={"result": "KO", "message": "pending"})
+            return httpx.Response(400, json={"error": "authorization_pending"})
         if calls == 3:
-            return httpx.Response(200, json={"result": "OK", "access_token": "secret-token"})
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "secret-token",
+                    "refresh_token": "refresh-secret",
+                    "expires_in": 604800,
+                    "token_type": "Bearer",
+                    "scope": "media:read media:write",
+                },
+            )
         assert calls == 4
         assert request.url.path == "/users/settings"
         assert not (config_dir / "auth.json").exists()
@@ -105,6 +114,11 @@ def test_login_requires_logout_before_switching_persisted_accounts(tmp_path: Pat
         access_token="existing-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
     )
 
     result = CliRunner().invoke(
@@ -131,7 +145,16 @@ def test_browser_failure_does_not_fail_pin_authorization(tmp_path: Path) -> None
                     "interval": 5,
                 },
             ),
-            httpx.Response(200, json={"result": "OK", "access_token": "secret-token"}),
+            httpx.Response(
+                200,
+                json={
+                    "access_token": "secret-token",
+                    "refresh_token": "refresh-secret",
+                    "expires_in": 604800,
+                    "token_type": "Bearer",
+                    "scope": "media:read media:write",
+                },
+            ),
             httpx.Response(200, json={"user": {"name": "Javier"}, "account": {"id": 12345}}),
         ]
     )

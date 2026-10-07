@@ -24,8 +24,8 @@ def test_logout_deletes_local_credential_account_metadata_and_snapshot(tmp_path:
     assert result.exit_code == 0
     assert runtime.credentials.read() is None
     assert not snapshot.exists()
-    assert "remote Access Token remains active" in result.stdout
-    assert "Connected Apps" in result.stdout
+    assert "remote Access Token remains active or unverified" in result.stdout
+    assert "Connected Apps" in " ".join(result.stdout.split())
 
 
 def test_logout_explains_that_environment_override_cannot_be_removed(tmp_path: Path) -> None:
@@ -44,7 +44,9 @@ def test_logout_explains_that_environment_override_cannot_be_removed(tmp_path: P
 
 
 def test_logout_can_cancel_without_deleting_local_state(tmp_path: Path) -> None:
-    runtime = Runtime.for_testing(config_dir=tmp_path / "config", data_dir=tmp_path / "data")
+    runtime = Runtime.for_testing(
+        config_dir=tmp_path / "config", data_dir=tmp_path / "data", interactive=True
+    )
     runtime.credentials.write(
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),

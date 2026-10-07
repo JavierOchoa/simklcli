@@ -51,6 +51,11 @@ def test_status_reports_persisted_account_without_network_access(tmp_path: Path)
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
     )
 
     result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "status", "--json"])
@@ -87,6 +92,11 @@ def test_status_check_validates_token_and_refreshes_display_name(tmp_path: Path)
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
     )
 
     result = CliRunner().invoke(
@@ -120,6 +130,11 @@ def test_status_check_json_reports_local_refresh_failure(
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
     )
 
     def fail_write(path: Path, payload: dict[str, object]) -> None:
@@ -195,6 +210,11 @@ def test_status_check_cannot_resurrect_credentials_after_concurrent_logout(
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
     )
 
     result = CliRunner().invoke(
@@ -210,6 +230,8 @@ def test_status_check_cannot_resurrect_credentials_after_concurrent_logout(
 
 def test_confirmed_invalid_persisted_token_clears_account_and_snapshot(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(400, json={"error": "invalid_grant"})
         return httpx.Response(
             401,
             json={"error": "user_token_failed", "code": 401, "message": "revoked"},
@@ -224,6 +246,11 @@ def test_confirmed_invalid_persisted_token_clears_account_and_snapshot(tmp_path:
         access_token="revoked-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
     )
     snapshot = runtime.snapshots.path(12345)
     snapshot.parent.mkdir(parents=True)
@@ -244,8 +271,8 @@ def test_confirmed_invalid_persisted_token_clears_account_and_snapshot(tmp_path:
     }
     assert "invalid or revoked" in result.stderr
     assert "simkl auth login" in result.stderr
-    assert runtime.credentials.read() is None
-    assert not snapshot.exists()
+    assert runtime.credentials.read().invalidated  # type: ignore[union-attr]
+    assert snapshot.exists()
 
 
 def test_environment_token_takes_precedence_without_exposing_or_persisting_it(
@@ -265,18 +292,23 @@ def test_environment_token_takes_precedence_without_exposing_or_persisting_it(
     }
 
 
-def test_environment_override_still_reports_locally_recorded_account(tmp_path: Path) -> None:
+def test_environment_override_never_borrows_shadowed_account_identity(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path, environ={"SIMKL_ACCESS_TOKEN": "environment-secret"})
     runtime.credentials.write(
         access_token="stored-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
     )
 
     result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "status", "--json"])
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout)["account"] == {"id": 12345, "name": "Javier"}
+    assert json.loads(result.stdout)["account"] is None
     assert json.loads(result.stdout)["credential_source"] == "environment"
 
 
@@ -310,6 +342,11 @@ def test_invalid_environment_token_does_not_delete_shadowed_persistent_account(
         access_token="still-stored-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
     )
 
     result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "status", "--check"])
@@ -337,6 +374,11 @@ def test_status_check_rejects_account_identity_change(tmp_path: Path) -> None:
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
     )
 
     result = CliRunner().invoke(
