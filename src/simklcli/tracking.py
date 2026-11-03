@@ -427,6 +427,13 @@ class Tracking:
             if before is None or not before.watched:
                 self._save_focused(item, before)
                 return {**self._result(item, before), "message": "Watched State was already clear."}
+            if item.kind is MediaKind.MOVIE and before.list_status is ListStatus.COMPLETED:
+                raise ValueError(
+                    "Simkl cannot keep a Movie Completed without marking it watched. "
+                    "Move it explicitly to Plan to Watch or Dropped with simkl library "
+                    "set-status to clear Watched State and preserve its User Rating. "
+                    "Nothing was changed."
+                )
             try:
                 recovered = self._send(
                     "/sync/history/remove",

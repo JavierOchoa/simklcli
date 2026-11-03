@@ -62,6 +62,39 @@ def test_standalone_unmark_preserves_status_and_rating(tmp_path: Path, media_id:
     assert "overview" not in server.runtime.snapshots.path(100).read_text()
 
 
+def test_completed_movie_unmark_fails_before_any_write(tmp_path: Path) -> None:
+    server = SimklFixture(tmp_path)
+    original = server.put(1, status="completed", rating=9, watched=True).copy()
+    result = CliRunner().invoke(
+        create_app(lambda: server.runtime), ["watched", "unmark", "simkl:1", "--json"]
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["error"] == "command_failed"
+    assert "Plan to Watch or Dropped" in payload["message"]
+    assert "Nothing was changed" in payload["message"]
+    assert server.posts() == []
+    assert server.library[1] == original
+
+
+@pytest.mark.parametrize("status", ["plan-to-watch", "dropped"])
+def test_explicit_movie_status_move_clears_watched_and_preserves_rating(
+    tmp_path: Path, status: str
+) -> None:
+    server = SimklFixture(tmp_path)
+    server.put(1, status="completed", watched=True, rating=7)
+    result = invoke(server, "library", "set-status", "simkl:1", status)
+    assert result["state"]["list_status"] == status
+    assert result["state"]["watched"] is False
+    assert result["state"]["last_watched_at"] is None
+    assert result["state"]["user_rating"] == 7
+    assert [request.url.path for request in server.posts()] == ["/sync/add-to-list"]
+    before = len(server.posts())
+    unmarked = invoke(server, "watched", "unmark", "simkl:1")
+    assert unmarked["state"] == result["state"]
+    assert len(server.posts()) == before
+
+
 @pytest.mark.parametrize(
     "failure,exit_code,outcome",
     [
