@@ -122,6 +122,10 @@ so the CLI reports an unknown outcome instead of encouraging a blind retry.
 Simkl PRO or VIP. Use `--rewatch-id` to resume a specific known session.
 Unmark Watched preserves Library membership, List Status, and User Rating;
 `library remove` deletes all three along with Watched State.
+Simkl makes Completed Movies watched automatically, so `watched unmark` rejects
+that case before changing anything. Use an explicit `library set-status` move
+to `plan-to-watch` or `dropped` to clear a Movie's Watched State while keeping
+its User Rating.
 
 Every command accepts `--json`: stdout contains one JSON result, diagnostics
 go to stderr, and prompts are disabled. Whole-item removal, bulk updates, and

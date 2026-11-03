@@ -53,6 +53,14 @@ V1 client IDs and tokens cannot be upgraded or exchanged.
    only after restoring and verifying it. A process kill or API outage can
    interrupt restoration; recover from the backup before trying again.
 
+   Simkl couples Completed Movies to Watched State. The smoke explicitly moves
+   the Movie back to Plan to Watch to clear Watched State and checks that its
+   User Rating remains intact. The subsequent Unmark Watched call checks the
+   already-unwatched case; unmarking a Completed Movie directly is rejected
+   before any write. Episode unmarking is covered by the offline tests.
+   Each run clears its prior success receipt, so a failed run cannot leave an
+   earlier success looking current.
+
 The Access Token lasts seven days; its paired Refresh Token lasts 180 days,
 sliding on use. Refresh does not rotate the Refresh Token, but invalidates the
 old Access Token immediately. The CLI locks and rereads shared credentials to

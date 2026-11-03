@@ -16,6 +16,7 @@ from simklcli.tracking import Tracking
 
 
 def run_smoke(runtime: Runtime, reference: str, expected_account_id: int, receipt: Path) -> None:
+    receipt.unlink(missing_ok=True)
     credential = runtime.active_credential()
     if credential is None:
         raise ValueError("The dedicated smoke account needs SIMKL_ACCESS_TOKEN.")
@@ -67,6 +68,19 @@ def run_smoke(runtime: Runtime, reference: str, expected_account_id: int, receip
         service.set_status(item, ListStatus.PLAN_TO_WATCH)
         service.mark(item, WatchedTarget(), watched_at=viewing_time(None))
         service.rating(item, 7)
+        # Simkl couples a Movie's Completed status to Watched State. An explicit
+        # move clears it while preserving the rating; unmark is then an idempotent no-op.
+        service.set_status(item, ListStatus.PLAN_TO_WATCH)
+        cleared = service.focused(item)
+        if (
+            cleared is None
+            or cleared.watched
+            or cleared.list_status is not ListStatus.PLAN_TO_WATCH
+            or cleared.user_rating != 7
+        ):
+            raise RuntimeError(
+                "Movie status change did not clear Watched State and keep the rating."
+            )
         service.unmark(item, WatchedTarget())
         service.rating(item, None)
         service.remove(item)
@@ -80,7 +94,10 @@ def run_smoke(runtime: Runtime, reference: str, expected_account_id: int, receip
             if before.watched:
                 assert before.last_watched_at is not None
                 service.mark(item, WatchedTarget(), watched_at=before.last_watched_at)
-            service.set_status(item, before.list_status)
+            # Marking a Movie already restores Completed. Re-adding that status
+            # can replace the original Last Watched At with the current time.
+            if not before.watched or before.list_status is not ListStatus.COMPLETED:
+                service.set_status(item, before.list_status)
             if before.user_rating is not None:
                 service.rating(item, before.user_rating)
         restored = service.focused(item)

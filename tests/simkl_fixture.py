@@ -209,6 +209,12 @@ class SimklFixture:
             row = row if row is not None else self.put(media_id)
             if path == "/sync/add-to-list":
                 row["status"] = payload["to"]
+                if self.kinds[media_id] is MediaKind.MOVIE:
+                    row["last_watched_at"] = (
+                        payload.get("watched_at") or self.timestamp
+                        if row["status"] == "completed"
+                        else None
+                    )
             elif path.startswith("/sync/ratings"):
                 row["user_rating"] = payload.get("rating")
             elif path == "/sync/history":

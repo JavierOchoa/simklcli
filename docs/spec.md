@@ -234,6 +234,14 @@ sequentially, then verify the complete final state. Report partial or unknown
 outcome when preservation cannot be established; never silently turn Unmark
 Watched into Remove from Library.
 
+Simkl couples a Movie's Completed List Status to Watched State. Unmark Watched
+must reject a watched, Completed Movie before any write because restoring
+Completed would mark it watched again. An explicit `library set-status` move to
+Plan to Watch or Dropped clears the Movie's Watched State and retains its User
+Rating; the CLI must not choose that status for the user. See ADR-0003 for the
+live-verified constraint. The Movie smoke exercises this explicit status change
+and the subsequent idempotent Unmark Watched operation.
+
 ## Testing and continuous integration
 
 Merge-gating tests never contact Simkl. Use:
