@@ -32,8 +32,17 @@ Implementation and local verification tracking: [GitHub issue #14](https://githu
 - Keep snapshots and account metadata when a grant requires reauthorization.
   Delete them on explicit logout, consistent with ADR-0002. V2 logout requests
   revocation best-effort and exposes acknowledgement without claiming proof.
-- Remove the embedded V1 app ID. Local setup supplies a real V2 public ID;
-  each stored token remembers its issuer. Do not invent a replacement app ID.
+- Remove the embedded V1 app ID. Each stored token remembers its issuer. Do not
+  invent a replacement app ID; embed only the maintainer's registered V2 one.
+
+## Amendment: embedded V2 app ID
+
+The maintainer has registered simklcli's AUTH V2 app as TV, devices & command
+line, and the package embeds its public client ID as the default. Simkl
+documents V2 client IDs as safe to publish: a bare ID reaches only public
+catalog data, and quotas are per user, not per app. `SIMKL_CLIENT_ID` still
+overrides it, and existing credentials keep their stored issuer, so replacing
+the embedded ID later does not invalidate earlier logins.
 
 ## Consequences
 

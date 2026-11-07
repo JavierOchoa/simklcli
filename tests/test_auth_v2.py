@@ -15,7 +15,7 @@ from simklcli.api import InvalidAccessTokenError, SimklClient, SimklResponseErro
 from simklcli.catalog import Catalog
 from simklcli.cli import create_app
 from simklcli.media import MediaKind
-from simklcli.runtime import Runtime
+from simklcli.runtime import DEFAULT_CLIENT_ID, Runtime
 from simklcli.storage import Account, CredentialRepository, CredentialSource, CredentialStorageError
 from tests.test_storage import MemoryKeyring
 
@@ -438,11 +438,37 @@ def test_logout_revocation_is_best_effort_and_never_claims_confirmation(
     assert "refresh-secret" not in result.output
 
 
-def test_missing_client_id_and_legacy_environment_fail_before_network(tmp_path: Path) -> None:
-    runtime = runtime_at(tmp_path, lambda request: pytest.fail("Unexpected network call"))
-    runtime.environ = {}
+@pytest.mark.parametrize("environ", [{}, {"SIMKL_CLIENT_ID": "  "}])
+def test_login_without_override_uses_embedded_v2_client_id(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    client_ids: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        client_ids.append(request.url.params["client_id"])
+        if request.url.path == "/oauth2/device":
+            return httpx.Response(200, json=pin())
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(200, json=tokens())
+        return settings()
+
+    runtime = runtime_at(tmp_path, handler)
+    runtime.environ = environ
     result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "login", "--storage", "file"])
-    assert result.exit_code == 1 and "SIMKL_CLIENT_ID" in result.stderr
+    assert result.exit_code == 0, result.output
+    assert DEFAULT_CLIENT_ID and set(client_ids) == {DEFAULT_CLIENT_ID}
+    stored = runtime.credentials.read()
+    assert stored is not None and stored.client_id == DEFAULT_CLIENT_ID
+
+
+def test_missing_client_id_and_legacy_environment_fail_before_network(tmp_path: Path) -> None:
+    client = SimklClient(
+        client_id="",
+        transport=httpx.MockTransport(lambda request: pytest.fail("Unexpected network call")),
+    )
+    with pytest.raises(SimklResponseError, match="SIMKL_CLIENT_ID"):
+        client.start_pin_authorization()
+    runtime = runtime_at(tmp_path, lambda request: pytest.fail("Unexpected network call"))
     runtime.environ = {"SIMKL_CLIENT_ID": "v2", "SIMKL_ACCESS_TOKEN": "a" * 64}
     result = CliRunner().invoke(create_app(lambda: runtime), ["library", "list", "--json"])
     assert result.exit_code == 1 and "V1 token" in result.stderr

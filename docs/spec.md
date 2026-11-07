@@ -82,10 +82,10 @@ Number, or a qualified TVDB/AniDB episode-level External ID.
 ## Authentication
 
 Use AUTH V2 PIN Authorization exclusively for the v1 product. AUTH V1 is a
-separate, deprecated Simkl protocol. Local use requires a newly registered V2
-public `SIMKL_CLIENT_ID`; store the issuing client ID with the credential and
-reject mismatched overrides. Never ship a client secret. A public V2 app ID may
-be embedded once the maintainer registers it; do not reuse the removed V1 ID.
+separate, deprecated Simkl protocol. The package embeds the maintainer's public
+V2 app ID, registered as TV, devices & command line; `SIMKL_CLIENT_ID`
+overrides it. Store the issuing client ID with the credential and reject
+mismatched overrides. Never ship a client secret or reuse the removed V1 ID.
 See [ADR-0004](adr/0004-use-simkl-auth-v2.md) for the cutover decision.
 
 ### Login

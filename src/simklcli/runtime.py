@@ -26,7 +26,9 @@ if TYPE_CHECKING:
     from simklcli.api import SimklClient
 
 
-DEFAULT_CLIENT_ID = ""
+# Public AUTH V2 "TV, devices & command line" app ID for simklcli. It carries no
+# secret: Simkl refuses user-scoped requests without a user Access Token.
+DEFAULT_CLIENT_ID = "6d50d4e07aa47b6409a4cd0c2b16729fab7ddc7f5c111fcba7d0001ac054c164"
 
 
 @dataclass
@@ -95,8 +97,8 @@ class Runtime:
             )
         if credential.legacy or credential.invalidated:
             raise SimklResponseError(
-                "This account requires AUTH V2 authorization. Set SIMKL_CLIENT_ID to your "
-                "V2 app and run simkl auth login; the Library Snapshot will be retained."
+                "This account requires AUTH V2 authorization. Run simkl auth login; "
+                "the Library Snapshot will be retained."
             )
         if credential.source is CredentialSource.ENVIRONMENT:
             # Recognize genuine V1 credentials without accepting them on a V2 registration.
@@ -215,7 +217,7 @@ def default_runtime() -> Runtime:
     config_dir = Path(user_config_path("simklcli", appauthor=False))
     data_dir = Path(user_data_path("simklcli", appauthor=False))
     backend: Keyring = keyring.get_keyring()
-    client_id = os.environ.get("SIMKL_CLIENT_ID", DEFAULT_CLIENT_ID)
+    client_id = os.environ.get("SIMKL_CLIENT_ID", "").strip() or DEFAULT_CLIENT_ID
     return Runtime(
         credentials=CredentialRepository(config_dir, backend),
         snapshots=LibrarySnapshotStore(data_dir),

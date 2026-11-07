@@ -20,25 +20,33 @@ uv tool install simklcli
 
 ## Authentication
 
-Register an **AUTH V2** application as **TV, devices & command line** at
-[Simkl Developer Settings](https://simkl.com/settings/developer/). For local use,
-set its public client ID before the first login:
+The CLI ships with simklcli's public AUTH V2 app ID, so no developer
+registration is needed:
 
 ```sh
-export SIMKL_CLIENT_ID='your-v2-client-id'
-uv sync --locked
-uv run simkl auth login
-uv run simkl auth status --check
-uv run simkl search "Cowboy Bebop" --kind anime
-uv run simkl library list
-uv run simkl library list --offline
+simkl auth login
+simkl auth status --check
+simkl search "Cowboy Bebop" --kind anime
+simkl library list
+simkl library list --offline
 ```
+
+From a checkout, run the same commands through `uv sync --locked` and
+`uv run simkl …`.
 
 Login uses the V2 device-based PIN Authorization flow. Open the printed link
 and approve the application on Simkl; no client secret, redirect URL, or PKCE
-parameters are used by this flow. The V2 app ID is stored with its credential,
-so later invocations can use it without the environment variable. An override
-must match the app that issued the stored tokens.
+parameters are used by this flow. The client ID is public by design: on its
+own it reaches only public catalog data, and every user-scoped request also
+needs that user's Access Token.
+
+To use your own app instead, register an **AUTH V2** application as
+**TV, devices & command line** at
+[Simkl Developer Settings](https://simkl.com/settings/developer/) and set
+`SIMKL_CLIENT_ID` to its public ID before logging in. The issuing app ID is
+stored with each credential, so later invocations keep using it without the
+environment variable. An override must match the app that issued the stored
+tokens.
 
 ```sh
 simkl auth login
@@ -51,7 +59,8 @@ Login stores the Access Token and Refresh Token together in the OS keyring.
 If the platform has no usable keyring, plaintext storage must be
 selected explicitly with `simkl auth login --storage file`. Set
 `SIMKL_ACCESS_TOKEN` for a non-persisted automation override; it takes
-precedence over local credentials and requires its issuing V2 `SIMKL_CLIENT_ID`.
+precedence over local credentials and must come from the built-in app or from
+the app named by `SIMKL_CLIENT_ID`.
 Environment overrides are not refreshed or persisted; supply a fresh Access
 Token when it expires. The old embedded V1 client ID has been removed.
 
