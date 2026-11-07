@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -58,6 +59,42 @@ def test_logout_can_cancel_without_deleting_local_state(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "Aborted" in result.output
     assert runtime.credentials.read() is not None
+
+
+@pytest.mark.parametrize(
+    ("args", "v2", "revokes"),
+    [([], True, True), (["--local-only"], True, False), ([], False, False)],
+    ids=["v2", "v2-local-only", "legacy-v1"],
+)
+def test_logout_prompt_states_whether_remote_revocation_is_requested(
+    tmp_path: Path, args: list[str], v2: bool, revokes: bool
+) -> None:
+    runtime = Runtime.for_testing(
+        config_dir=tmp_path / "config", data_dir=tmp_path / "data", interactive=True
+    )
+    v2_fields: dict[str, Any] = (
+        {
+            "refresh_token": "refresh-secret",
+            "client_id": "test-v2-client",
+            "scope": "media:read media:write",
+            "expires_at": 2000.0,
+            "refresh_expires_at": 3000.0,
+        }
+        if v2
+        else {}
+    )
+    runtime.credentials.write(
+        access_token="secret-token",
+        account=Account(id=12345, name="Javier"),
+        source=CredentialSource.FILE,
+        **v2_fields,
+    )
+
+    result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "logout", *args], input="n\n")
+
+    assert result.exit_code == 1 and runtime.credentials.read() is not None
+    assert ("request V2 revocation" in result.output) is revokes
+    assert ("without revoking the Simkl grant" in result.output) is not revokes
 
 
 def test_logout_removes_persisted_state_but_not_environment_override(tmp_path: Path) -> None:
