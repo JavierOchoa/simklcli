@@ -198,8 +198,8 @@ class SimklClient:
                 error = "request_failed"
             if error in {"invalid_client", "unauthorized_client"}:
                 raise SimklResponseError(
-                    "Simkl rejected the client registration. Set SIMKL_CLIENT_ID to a new "
-                    "AUTH V2 app registered as TV, devices & command line."
+                    "Simkl rejected the client registration. If SIMKL_CLIENT_ID is set, it "
+                    "must be an AUTH V2 app registered as TV, devices & command line."
                 )
             raise OAuthGrantError(error)
 

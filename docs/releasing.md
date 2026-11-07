@@ -10,7 +10,9 @@ Create the `simkl-smoke` GitHub environment with:
 
 - secret `SIMKL_SMOKE_ACCESS_TOKEN`: a token for this registered application
   on a dedicated Simkl account, freshly issued by AUTH V2 with read/write scope;
-- variable `SIMKL_CLIENT_ID`: that token's issuing public V2 app ID;
+- variable `SIMKL_CLIENT_ID`: that token's issuing public V2 app ID. Use the
+  embedded ID from `src/simklcli/runtime.py` so the smoke exercises the
+  shipped app;
 - variable `SIMKL_SMOKE_ACCOUNT_ID`: that account's stable numeric Simkl ID;
 - variable `SIMKL_SMOKE_MEDIA_REFERENCE`: `simkl:<id>` for a reserved Movie.
 

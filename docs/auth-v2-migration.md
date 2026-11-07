@@ -1,22 +1,22 @@
 # AUTH V2 migration and local verification
 
 Simkl's AUTH V1 registrations are deprecated, with retirement expected around
-April 2027 (date not fixed). Register a separate V2 app and authorize it once:
-V1 client IDs and tokens cannot be upgraded or exchanged.
+April 2027 (date not fixed). V1 client IDs and tokens cannot be upgraded or
+exchanged, so each account authorizes the V2 app once.
 
-1. Open [Simkl Developer Settings](https://simkl.com/settings/developer/) and
-   create an AUTH V2 app named `simklcli` with type **TV, devices & command line**.
-   This type has no client secret or redirect URL. Keep your V1 app registered
-   while you verify the new connection.
-2. Set the new public ID and run from the checkout:
+1. simklcli ships its public AUTH V2 app ID (type **TV, devices & command
+   line**), so no registration is needed. To test against your own app, create
+   one at [Simkl Developer Settings](https://simkl.com/settings/developer/)
+   with that type and set `SIMKL_CLIENT_ID` to its public ID; on PowerShell,
+   use `$env:SIMKL_CLIENT_ID = 'your-v2-client-id'`. This type has no client
+   secret or redirect URL.
+2. Run from the checkout:
 
    ```sh
-   export SIMKL_CLIENT_ID='your-v2-client-id'
    uv sync --locked
    uv run simkl auth login
    ```
 
-   On PowerShell, use `$env:SIMKL_CLIENT_ID = 'your-v2-client-id'`.
    Open the printed approval link and select Allow while signed into the
    account you intend to use. Credentials default to the OS keyring; choose
    `--storage file` explicitly only when a usable keyring is unavailable.
