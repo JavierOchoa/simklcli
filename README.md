@@ -10,13 +10,15 @@ and retains a dated Library Snapshot for explicit offline reads.
 
 ## Install
 
-Python 3.11 or newer is required. Once the first release is published, install
-the supported package with:
+Python 3.11 or newer is required. Install the published package from
+[PyPI](https://pypi.org/project/simklcli/) with:
 
 ```sh
 uv tool install simklcli
 # or: pipx install simklcli
 ```
+
+Upgrade with `uv tool upgrade simklcli` (or `pipx upgrade simklcli`).
 
 ## Authentication
 
@@ -93,6 +95,15 @@ uv run ruff check .
 uv run mypy src tests scripts
 uv run pytest
 uv build --no-sources
+```
+
+To run your checkout as the global `simkl` command, install it in editable
+mode; code changes apply without reinstalling. Uninstall it before installing
+the PyPI release, since both provide `simkl`.
+
+```sh
+uv tool install --editable .   # run this checkout as `simkl`
+uv tool uninstall simklcli     # remove it again
 ```
 
 ## Tracking
