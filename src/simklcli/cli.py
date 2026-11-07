@@ -410,6 +410,7 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
         runtime = runtime_factory()
         environment_active = bool(runtime.environ.get("SIMKL_ACCESS_TOKEN", "").strip())
         credential = None
+        revoke = False
         try:
             with runtime.credentials.account_transaction():
                 account = runtime.credentials.read_account()
@@ -428,11 +429,16 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
                     raise typer.Exit(1)
                 if not yes and (json_output or not runtime.interactive):
                     raise AuthenticationStateError("Noninteractive logout requires --yes.")
-                if not yes and not typer.confirm(
-                    "Delete local credentials and Library Snapshot, and request V2 revocation?"
-                ):
-                    raise typer.Abort()
                 credential = runtime.credentials.read()
+                revoke = credential is not None and bool(credential.client_id) and not local_only
+                prompt = (
+                    "Delete local credentials and Library Snapshot, and request V2 revocation?"
+                    if revoke
+                    else "Delete local credentials and Library Snapshot without revoking the "
+                    "Simkl grant?"
+                )
+                if not yes and not typer.confirm(prompt):
+                    raise typer.Abort()
                 with runtime.snapshots.reversible_delete(account.id):
                     runtime.credentials.delete()
         except KeyboardInterrupt:
@@ -448,7 +454,7 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
             Console(stderr=True).print(f"[red]{exc}[/red]")
             raise typer.Exit(1) from None
         acknowledged = False
-        if credential is not None and credential.client_id and not local_only:
+        if revoke and credential is not None and credential.client_id:
             try:
                 SimklClient(
                     client_id=credential.client_id,
