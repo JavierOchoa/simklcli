@@ -58,9 +58,7 @@ class Catalog:
         if not query.strip():
             raise ValueError("Search query cannot be empty.")
         if self.access_token is None:
-            raise SimklResponseError(
-                "AUTH V2 search requires sign-in. Run simkl auth login explicitly."
-            )
+            raise SimklResponseError("Search requires sign-in. Run simkl auth login explicitly.")
         items = []
         more = False
         for selected in [kind] if kind is not None else list(MediaKind):
@@ -130,7 +128,7 @@ class Catalog:
             params["type"] = "tv" if kind is MediaKind.SHOW else kind.value
         if self.access_token is None:
             raise SimklResponseError(
-                "AUTH V2 reference resolution requires sign-in; use a Simkl ID with --kind "
+                "Reference resolution requires sign-in; use a Simkl ID with --kind "
                 "for an anonymous lookup, or run simkl auth login explicitly."
             )
         response = self.api._get("/redirect", params=params, access_token=self.access_token)

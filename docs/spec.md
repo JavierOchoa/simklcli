@@ -2,7 +2,7 @@
 
 Status: build-ready
 
-Last updated: 2026-10-07
+Last updated: 2026-11-07
 
 This document consolidates the decisions resolved in GitHub issues #5–#12. The
 canonical vocabulary is in [`../CONTEXT.md`](../CONTEXT.md), architectural
@@ -34,6 +34,7 @@ simkl lookup <media-reference>
 simkl library list|set-status|remove|repair
 simkl watched mark|unmark <media-reference> [target selectors]
 simkl rating set|remove <media-reference>
+simkl --version
 ```
 
 There is no public `sync` command. Online Library reads reconcile automatically;
@@ -85,7 +86,7 @@ Use AUTH V2 PIN Authorization exclusively for the v1 product. AUTH V1 is a
 separate, deprecated Simkl protocol. The package embeds the maintainer's public
 V2 app ID, registered as TV, devices & command line; `SIMKL_CLIENT_ID`
 overrides it. Store the issuing client ID with the credential and reject
-mismatched overrides. Never ship a client secret or reuse the removed V1 ID.
+mismatched overrides. Never ship a client secret or an AUTH V1 client ID.
 See [ADR-0004](adr/0004-use-simkl-auth-v2.md) for the cutover decision.
 
 ### Login
@@ -104,9 +105,9 @@ See [ADR-0004](adr/0004-use-simkl-auth-v2.md) for the cutover decision.
 - After authorization, call `POST /users/settings` and validate the stable
   account ID and display name before persisting anything.
 - Support one Authenticated Account. Switching accounts requires logout, then
-  login. Legacy V1 and invalidated or expired V2 grants may reconnect directly;
-  validate the same account ID before replacing credentials and retain its
-  Library Snapshot. Failed or cancelled reauthorization preserves prior state.
+  login. Invalidated or expired grants may reconnect directly; validate the
+  same account ID before replacing credentials and retain its Library
+  Snapshot. Failed or cancelled reauthorization preserves prior state.
 
 ### Credential sources
 
@@ -120,8 +121,9 @@ See [ADR-0004](adr/0004-use-simkl-auth-v2.md) for the cutover decision.
   silently downgrade.
 - Store both tokens as one atomic keyring value or in the explicitly chosen
   plaintext file. Account metadata holds the client ID, scope, and token
-  expiries, but contains no keyring secrets. Read legacy credential schemas
-  for offline use and explicit reconnection only.
+  expiries, but contains no keyring secrets. Persist only complete token
+  pairs. Credentials in the pre-release version-1 schema are unsupported:
+  commands say to log out, and logout deletes them without revocation.
 - Plaintext storage uses the platform user-configuration directory, owner-only
   permissions where supported, and atomic replacement.
 
@@ -144,7 +146,7 @@ See [ADR-0004](adr/0004-use-simkl-auth-v2.md) for the cutover decision.
 - Logout removes local credentials, account metadata, and that account's
   Library Snapshot, then best-effort requests V2 grant revocation. Report
   acknowledgement rather than confirmed revocation; offer `--local-only` for
-  offline removal. Never revoke the environment override or a legacy V1 token.
+  offline removal. Never revoke the environment override.
 
 ## HTTP boundary and rate control
 

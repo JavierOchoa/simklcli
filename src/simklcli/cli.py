@@ -10,6 +10,7 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
+from simklcli import __version__
 from simklcli.api import (
     InvalidAccessTokenError,
     PollSlowDown,
@@ -20,7 +21,12 @@ from simklcli.api import (
 from simklcli.commands import register_commands
 from simklcli.output import JsonGroup
 from simklcli.runtime import Runtime, default_runtime
-from simklcli.storage import Account, CredentialSource, CredentialStorageError
+from simklcli.storage import (
+    Account,
+    CredentialSource,
+    CredentialStorageError,
+    UnsupportedCredentialError,
+)
 
 
 class CredentialStorage(StrEnum):
@@ -43,7 +49,6 @@ def _complete_pin_authorization(
     previous_account = runtime.credentials.read_account()
     if (
         previous is not None
-        and not previous.legacy
         and not previous.invalidated
         and (previous.refresh_expires_at is None or previous.refresh_expires_at > runtime.clock())
     ):
@@ -121,6 +126,25 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
         no_args_is_help=True,
     )
     app.add_typer(auth_app, name="auth")
+
+    def show_version(value: bool) -> None:
+        if value:
+            typer.echo(f"simkl {__version__}")
+            raise typer.Exit()
+
+    @app.callback()
+    def root(
+        version: Annotated[
+            bool,
+            typer.Option(
+                "--version",
+                callback=show_version,
+                is_eager=True,
+                help="Show the simkl version and exit.",
+            ),
+        ] = False,
+    ) -> None:
+        del version
 
     @auth_app.command("login")
     def auth_login(
@@ -238,20 +262,19 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
             )
             raise typer.Exit(1)
         account = credential.account
-        if not check and (credential.legacy or credential.invalidated):
+        if not check and credential.invalidated:
             payload = {
                 "authenticated": False,
                 "account": {"id": account.id, "name": account.name} if account else None,
                 "credential_source": credential.source.value,
                 "checked_online": False,
                 "requires_login": True,
-                "auth_version": 1 if credential.legacy else 2,
             }
             if json_output:
                 typer.echo(json.dumps(payload))
             else:
                 Console().print(
-                    "AUTH V2 authorization required. Run simkl auth login; "
+                    "This login has expired or was revoked. Run simkl auth login; "
                     "your Library Snapshot is retained."
                 )
             raise typer.Exit(1)
@@ -406,7 +429,7 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
             bool, typer.Option(help="Remove local credentials without remote revocation.")
         ] = False,
     ) -> None:
-        """Remove local credentials and request revocation of the stored V2 grant."""
+        """Remove local credentials and request revocation of the stored Simkl grant."""
         runtime = runtime_factory()
         environment_active = bool(runtime.environ.get("SIMKL_ACCESS_TOKEN", "").strip())
         credential = None
@@ -429,10 +452,15 @@ def create_app(runtime_factory: Callable[[], Runtime] = default_runtime) -> type
                     raise typer.Exit(1)
                 if not yes and (json_output or not runtime.interactive):
                     raise AuthenticationStateError("Noninteractive logout requires --yes.")
-                credential = runtime.credentials.read()
-                revoke = credential is not None and bool(credential.client_id) and not local_only
+                try:
+                    credential = runtime.credentials.read()
+                except UnsupportedCredentialError:
+                    # Pre-release credentials cannot be revoked; logout only removes them.
+                    credential = None
+                revoke = credential is not None and not local_only
                 prompt = (
-                    "Delete local credentials and Library Snapshot, and request V2 revocation?"
+                    "Delete local credentials and Library Snapshot, and request revocation of "
+                    "the Simkl grant?"
                     if revoke
                     else "Delete local credentials and Library Snapshot without revoking the "
                     "Simkl grant?"
