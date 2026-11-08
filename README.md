@@ -15,7 +15,8 @@ uv tool install simklcli
 # or: pipx install simklcli
 ```
 
-Upgrade with `uv tool upgrade simklcli` (or `pipx upgrade simklcli`).
+Upgrade with `uv tool upgrade simklcli` (or `pipx upgrade simklcli`), and check
+the installed version with `simkl --version`.
 
 ## Quick start
 
