@@ -95,13 +95,13 @@ class Runtime:
             raise SimklResponseError(
                 "The active credential has no validated Authenticated Account."
             )
-        if credential.legacy or credential.invalidated:
+        if credential.invalidated:
             raise SimklResponseError(
-                "This account requires AUTH V2 authorization. Run simkl auth login; "
+                "This login has expired or was revoked. Run simkl auth login; "
                 "the Library Snapshot will be retained."
             )
         if credential.source is CredentialSource.ENVIRONMENT:
-            # Recognize genuine V1 credentials without accepting them on a V2 registration.
+            # Reject AUTH V1 tokens (64 lowercase hex characters) pasted from other tools.
             token = credential.access_token
             if len(token) == 64 and all(c in "0123456789abcdef" for c in token):
                 raise SimklResponseError("SIMKL_ACCESS_TOKEN is a V1 token; authorize your V2 app.")

@@ -1,5 +1,6 @@
 from typer.testing import CliRunner
 
+from simklcli import __version__
 from simklcli.cli import app
 
 
@@ -30,3 +31,10 @@ def test_login_storage_choices_only_offer_persistent_backends() -> None:
     assert "keyring" in result.stdout
     assert "file" in result.stdout
     assert "environment" not in result.stdout
+
+
+def test_version_option_prints_the_package_version() -> None:
+    result = CliRunner().invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.stdout == f"simkl {__version__}\n"
