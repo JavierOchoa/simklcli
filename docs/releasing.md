@@ -18,7 +18,7 @@ Create the `simkl-smoke` GitHub environment with:
 
 The environment Access Token override does not auto-refresh. Replace it with a
 freshly authorized V2 token when it expires (seven days). Local account setup
-and testing are described in [auth-v2-migration.md](auth-v2-migration.md).
+and testing are described in [local-verification.md](local-verification.md).
 
 The Movie must have no Rewatch sessions; use a clean reserved item on the
 dedicated account. The smoke refuses a mismatched account, unknown original
