@@ -378,12 +378,11 @@ def test_pair_is_atomic_in_keyring_and_metadata_has_no_secrets(
 
 
 @pytest.mark.parametrize("account_id", [123, 999])
-def test_v1_reauthorization_preserves_snapshot_and_requires_same_account(
+def test_reauthorization_of_invalidated_grant_preserves_snapshot_and_requires_same_account(
     tmp_path: Path,
     account_id: int,
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert not request.url.path.startswith("/oauth/")
         if request.url.path == "/oauth2/device":
             return httpx.Response(200, json=pin())
         if request.url.path == "/oauth2/token":
@@ -391,9 +390,7 @@ def test_v1_reauthorization_preserves_snapshot_and_requires_same_account(
         return settings(account_id)
 
     runtime = runtime_at(tmp_path, handler)
-    runtime.credentials.write(
-        access_token="legacy-token", account=Account(123, "Old name"), source=CredentialSource.FILE
-    )
+    store(runtime, invalidated=True)
     old = (tmp_path / "config" / "auth.json").read_bytes()
     snapshot = runtime.snapshots.path(123)
     snapshot.parent.mkdir(parents=True)
@@ -402,10 +399,31 @@ def test_v1_reauthorization_preserves_snapshot_and_requires_same_account(
     assert result.exit_code == (0 if account_id == 123 else 1), result.output
     assert snapshot.read_text() == "snapshot evidence"
     if account_id == 123:
-        assert not runtime.credentials.read().legacy  # type: ignore[union-attr]
+        stored = runtime.credentials.read()
+        assert stored is not None and not stored.invalidated
+        assert stored.access_token == "access-new"
     else:
         assert (tmp_path / "config" / "auth.json").read_bytes() == old
         assert "different account" in result.stderr
+
+
+def test_login_over_prerelease_credentials_explains_logout_without_network(
+    tmp_path: Path,
+) -> None:
+    runtime = runtime_at(tmp_path, lambda request: pytest.fail("Unexpected network call"))
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    metadata = (
+        '{"version":1,"storage":"file","account":{"id":123,"name":"Test"},'
+        '"access_token":"old-token"}'
+    )
+    (config_dir / "auth.json").write_text(metadata, encoding="utf-8")
+
+    result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "login", "--storage", "file"])
+
+    assert result.exit_code == 1
+    assert "simkl auth logout" in result.stderr
+    assert (config_dir / "auth.json").read_text(encoding="utf-8") == metadata
 
 
 @pytest.mark.parametrize("local_only,failure", [(False, False), (True, False), (False, True)])
@@ -606,9 +624,17 @@ def test_explicit_storage_change_removes_old_keyring_secret_and_rolls_back_on_fa
     keyring = MemoryKeyring()
     repository = CredentialRepository(tmp_path, keyring)
     repository.write(
-        access_token="legacy-secret", account=Account(123, "Test"), source=CredentialSource.KEYRING
+        access_token="access-old",
+        refresh_token="refresh-old",
+        expires_at=2000,
+        refresh_expires_at=3000,
+        client_id="app",
+        scope="media:read media:write",
+        account=Account(123, "Test"),
+        source=CredentialSource.KEYRING,
     )
     old_metadata = (tmp_path / "auth.json").read_bytes()
+    old_secret = keyring.password
     original_delete = keyring.delete_password
 
     def failed_delete(service: str, username: str) -> None:
@@ -628,7 +654,7 @@ def test_explicit_storage_change_removes_old_keyring_secret_and_rolls_back_on_fa
     monkeypatch.setattr(keyring, "delete_password", failed_delete)
     with pytest.raises(OSError):
         repository.write(**args)
-    assert keyring.password == "legacy-secret"
+    assert old_secret is not None and keyring.password == old_secret
     assert (tmp_path / "auth.json").read_bytes() == old_metadata
     monkeypatch.setattr(keyring, "delete_password", original_delete)
     repository.write(**args)

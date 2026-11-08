@@ -3,6 +3,7 @@ import os
 import stat
 from pathlib import Path
 from threading import Event, Thread
+from typing import Any
 
 import pytest
 
@@ -14,7 +15,16 @@ from simklcli.storage import (
     CredentialSource,
     CredentialStorageError,
     EmptyKeyring,
+    UnsupportedCredentialError,
 )
+
+V2_FIELDS: dict[str, Any] = {
+    "refresh_token": "refresh-token",
+    "expires_at": 4102444800.0,
+    "refresh_expires_at": 4102444800.0,
+    "client_id": "test-v2-client",
+    "scope": "media:read media:write",
+}
 
 
 class MemoryKeyring:
@@ -57,6 +67,7 @@ def test_plaintext_credentials_round_trip_in_an_owner_only_file(tmp_path: Path) 
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        **V2_FIELDS,
     )
 
     credential = repository.read()
@@ -78,6 +89,7 @@ def test_keyring_credentials_keep_token_out_of_account_metadata(tmp_path: Path) 
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.KEYRING,
+        **V2_FIELDS,
     )
 
     metadata = json.loads((tmp_path / "config" / "auth.json").read_text(encoding="utf-8"))
@@ -97,6 +109,47 @@ def test_corrupt_account_metadata_is_reported_as_storage_error(tmp_path: Path) -
         repository.read()
 
 
+def test_repository_refuses_credentials_without_a_complete_token_pair(tmp_path: Path) -> None:
+    repository = CredentialRepository(tmp_path / "config", EmptyKeyring())
+
+    for missing in ("refresh_token", "client_id", "scope"):
+        with pytest.raises(CredentialStorageError, match="incomplete"):
+            repository.write(
+                access_token="secret-token",
+                account=Account(id=12345, name="Javier"),
+                source=CredentialSource.FILE,
+                **{**V2_FIELDS, missing: None},
+            )
+    assert not (tmp_path / "config" / "auth.json").exists()
+
+
+@pytest.mark.parametrize("storage", ["file", "keyring"])
+def test_prerelease_credential_format_is_rejected_with_logout_guidance(
+    tmp_path: Path, storage: str
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    metadata: dict[str, object] = {
+        "version": 1,
+        "storage": storage,
+        "account": {"id": 12345, "name": "Javier"},
+    }
+    keyring = MemoryKeyring()
+    if storage == "file":
+        metadata["access_token"] = "old-token"
+    else:
+        keyring.password = "old-token"
+    (config_dir / "auth.json").write_text(json.dumps(metadata), encoding="utf-8")
+    repository = CredentialRepository(config_dir, keyring)
+
+    with pytest.raises(UnsupportedCredentialError, match="simkl auth logout"):
+        repository.read()
+    assert repository.read_account() == Account(id=12345, name="Javier")
+    assert repository.delete() == Account(id=12345, name="Javier")
+    assert keyring.password is None
+    assert not (config_dir / "auth.json").exists()
+
+
 def test_repository_refuses_empty_or_environment_credentials(tmp_path: Path) -> None:
     repository = CredentialRepository(tmp_path / "config", EmptyKeyring())
 
@@ -105,12 +158,14 @@ def test_repository_refuses_empty_or_environment_credentials(tmp_path: Path) -> 
             access_token="",
             account=Account(id=12345, name="Javier"),
             source=CredentialSource.FILE,
+            **V2_FIELDS,
         )
     with pytest.raises(CredentialStorageError, match="cannot be persisted"):
         repository.write(
             access_token="environment-token",
             account=Account(id=12345, name="Javier"),
             source=CredentialSource.ENVIRONMENT,
+            **V2_FIELDS,
         )
 
 
@@ -124,6 +179,7 @@ def test_keyring_backend_failures_never_trigger_plaintext_fallback(tmp_path: Pat
             access_token="secret-token",
             account=Account(id=12345, name="Javier"),
             source=CredentialSource.KEYRING,
+            **V2_FIELDS,
         )
     assert not (tmp_path / "config" / "auth.json").exists()
 
@@ -139,6 +195,7 @@ def test_keyring_write_rolls_back_when_metadata_cannot_be_persisted(tmp_path: Pa
             access_token="secret-token",
             account=Account(id=12345, name="Javier"),
             source=CredentialSource.KEYRING,
+            **V2_FIELDS,
         )
 
     assert keyring.password is None
@@ -154,9 +211,13 @@ def test_missing_keyring_token_and_missing_metadata_are_not_authenticated(tmp_pa
     (config_dir / "auth.json").write_text(
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "storage": "keyring",
                 "account": {"id": 12345, "name": "Javier"},
+                "client_id": "test-v2-client",
+                "scope": "media:read media:write",
+                "expires_at": 4102444800.0,
+                "refresh_expires_at": 4102444800.0,
             }
         ),
         encoding="utf-8",
@@ -183,6 +244,7 @@ def test_keyboard_interrupt_rolls_back_new_keyring_and_metadata(
             access_token="secret-token",
             account=Account(id=12345, name="Javier"),
             source=CredentialSource.KEYRING,
+            **V2_FIELDS,
         )
 
     assert keyring.password is None
@@ -198,6 +260,7 @@ def test_keyboard_interrupt_inside_keyring_write_is_rolled_back(tmp_path: Path) 
             access_token="secret-token",
             account=Account(id=12345, name="Javier"),
             source=CredentialSource.KEYRING,
+            **V2_FIELDS,
         )
 
     assert keyring.password is None
@@ -222,6 +285,7 @@ def test_keyboard_interrupt_rolls_back_plaintext_metadata(
             access_token="secret-token",
             account=Account(id=12345, name="Javier"),
             source=CredentialSource.FILE,
+            **V2_FIELDS,
         )
 
     assert repository.read() is None
@@ -237,6 +301,7 @@ def test_failed_display_name_refresh_preserves_existing_keyring_credential(
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.KEYRING,
+        **V2_FIELDS,
     )
 
     def fail_write(path: Path, payload: dict[str, object]) -> None:
@@ -249,9 +314,10 @@ def test_failed_display_name_refresh_preserves_existing_keyring_credential(
             access_token="secret-token",
             account=Account(id=12345, name="Javier Ochoa"),
             source=CredentialSource.KEYRING,
+            **V2_FIELDS,
         )
 
-    assert keyring.password == "secret-token"
+    assert json.loads(keyring.password or "{}")["access_token"] == "secret-token"
     assert repository.read() is not None
     assert repository.read().account == Account(id=12345, name="Javier")  # type: ignore[union-attr]
 
@@ -287,6 +353,7 @@ def test_keyring_delete_failure_restores_token_and_keeps_logout_retryable(
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.KEYRING,
+        **V2_FIELDS,
     )
     original_unlink = Path.unlink
 
@@ -300,5 +367,5 @@ def test_keyring_delete_failure_restores_token_and_keeps_logout_retryable(
     with pytest.raises(OSError, match="disk failure"):
         repository.delete()
 
-    assert keyring.password == "secret-token"
+    assert json.loads(keyring.password or "{}")["access_token"] == "secret-token"
     assert repository.read() is not None

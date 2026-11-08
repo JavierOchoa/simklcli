@@ -406,3 +406,53 @@ def test_status_reports_corrupt_local_metadata_without_traceback(tmp_path: Path)
     assert json.loads(result.stdout)["error"] == "credential_storage_error"
     assert "Stored account metadata could not be read" in result.stderr
     assert "Traceback" not in result.output
+
+
+def test_status_reports_invalidated_grant_requires_login_without_network(tmp_path: Path) -> None:
+    runtime = make_runtime(tmp_path)
+    runtime.credentials.write(
+        access_token="secret-token",
+        account=Account(id=12345, name="Javier"),
+        source=CredentialSource.FILE,
+        refresh_token="test-refresh-token",
+        expires_at=4102444800.0,
+        refresh_expires_at=4102444800.0,
+        client_id=runtime.client_id(),
+        scope="media:read media:write",
+        invalidated=True,
+    )
+
+    result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "status", "--json"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == {
+        "authenticated": False,
+        "account": {"id": 12345, "name": "Javier"},
+        "credential_source": "file",
+        "checked_online": False,
+        "requires_login": True,
+    }
+    human = CliRunner().invoke(create_app(lambda: runtime), ["auth", "status"])
+    assert human.exit_code == 1
+    assert "Run simkl auth login" in human.stdout
+    assert "V2" not in human.stdout
+
+
+def test_status_explains_prerelease_credential_format(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "auth.json").write_text(
+        '{"version":1,"storage":"file","account":{"id":12345,"name":"Javier"},'
+        '"access_token":"old-token"}',
+        encoding="utf-8",
+    )
+    runtime = make_runtime(tmp_path)
+
+    result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "status", "--json"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"] == "credential_storage_error"
+    assert "simkl auth logout" in " ".join(result.stderr.split())
+    tracking = CliRunner().invoke(create_app(lambda: runtime), ["library", "list", "--offline"])
+    assert tracking.exit_code == 1
+    assert "simkl auth logout" in " ".join(tracking.stderr.split())

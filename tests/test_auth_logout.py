@@ -1,12 +1,21 @@
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
 from simklcli.cli import create_app
 from simklcli.runtime import Runtime
 from simklcli.storage import Account, CredentialSource
+
+V2_FIELDS: dict[str, Any] = {
+    "refresh_token": "refresh-secret",
+    "client_id": "test-v2-client",
+    "scope": "media:read media:write",
+    "expires_at": 4102444800.0,
+    "refresh_expires_at": 4102444800.0,
+}
 
 
 def test_logout_deletes_local_credential_account_metadata_and_snapshot(tmp_path: Path) -> None:
@@ -15,12 +24,15 @@ def test_logout_deletes_local_credential_account_metadata_and_snapshot(tmp_path:
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        **V2_FIELDS,
     )
     snapshot = runtime.snapshots.path(12345)
     snapshot.parent.mkdir(parents=True)
     snapshot.write_text('{"version":1}', encoding="utf-8")
 
-    result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "logout", "--yes"])
+    result = CliRunner().invoke(
+        create_app(lambda: runtime), ["auth", "logout", "--yes", "--local-only"]
+    )
 
     assert result.exit_code == 0
     assert runtime.credentials.read() is None
@@ -52,6 +64,7 @@ def test_logout_can_cancel_without_deleting_local_state(tmp_path: Path) -> None:
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        **V2_FIELDS,
     )
 
     result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "logout"], input="n\n")
@@ -62,39 +75,52 @@ def test_logout_can_cancel_without_deleting_local_state(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("args", "v2", "revokes"),
-    [([], True, True), (["--local-only"], True, False), ([], False, False)],
-    ids=["v2", "v2-local-only", "legacy-v1"],
+    ("args", "revokes"),
+    [([], True), (["--local-only"], False)],
+    ids=["revoke", "local-only"],
 )
 def test_logout_prompt_states_whether_remote_revocation_is_requested(
-    tmp_path: Path, args: list[str], v2: bool, revokes: bool
+    tmp_path: Path, args: list[str], revokes: bool
 ) -> None:
     runtime = Runtime.for_testing(
         config_dir=tmp_path / "config", data_dir=tmp_path / "data", interactive=True
-    )
-    v2_fields: dict[str, Any] = (
-        {
-            "refresh_token": "refresh-secret",
-            "client_id": "test-v2-client",
-            "scope": "media:read media:write",
-            "expires_at": 2000.0,
-            "refresh_expires_at": 3000.0,
-        }
-        if v2
-        else {}
     )
     runtime.credentials.write(
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
-        **v2_fields,
+        **V2_FIELDS,
     )
 
     result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "logout", *args], input="n\n")
 
     assert result.exit_code == 1 and runtime.credentials.read() is not None
-    assert ("request V2 revocation" in result.output) is revokes
+    assert ("request revocation of the Simkl grant" in result.output) is revokes
     assert ("without revoking the Simkl grant" in result.output) is not revokes
+
+
+def test_logout_removes_prerelease_credentials_without_revocation(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "auth.json").write_text(
+        '{"version":1,"storage":"file","account":{"id":12345,"name":"Javier"},'
+        '"access_token":"old-token"}',
+        encoding="utf-8",
+    )
+    runtime = Runtime.for_testing(
+        config_dir=config_dir,
+        data_dir=tmp_path / "data",
+        transport=httpx.MockTransport(lambda request: pytest.fail("Unexpected network call")),
+    )
+    snapshot = runtime.snapshots.path(12345)
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text('{"version":1}', encoding="utf-8")
+
+    result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "logout", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert not (config_dir / "auth.json").exists()
+    assert not snapshot.exists()
 
 
 def test_logout_removes_persisted_state_but_not_environment_override(tmp_path: Path) -> None:
@@ -107,9 +133,12 @@ def test_logout_removes_persisted_state_but_not_environment_override(tmp_path: P
         access_token="stored-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        **V2_FIELDS,
     )
 
-    result = CliRunner().invoke(create_app(lambda: runtime), ["auth", "logout", "--yes"])
+    result = CliRunner().invoke(
+        create_app(lambda: runtime), ["auth", "logout", "--yes", "--local-only"]
+    )
 
     assert result.exit_code == 0
     assert runtime.credentials.read() is None
@@ -123,6 +152,7 @@ def test_logout_keeps_credentials_when_snapshot_deletion_fails(tmp_path: Path) -
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        **V2_FIELDS,
     )
     snapshot = runtime.snapshots.path(12345)
     snapshot.mkdir(parents=True)
@@ -139,7 +169,9 @@ def test_logout_clears_metadata_and_snapshot_when_keyring_token_is_missing(
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "auth.json").write_text(
-        '{"version":1,"storage":"keyring","account":{"id":12345,"name":"Javier"}}',
+        '{"version":2,"storage":"keyring","account":{"id":12345,"name":"Javier"},'
+        '"client_id":"test-v2-client","scope":"media:read media:write",'
+        '"expires_at":4102444800.0,"refresh_expires_at":4102444800.0}',
         encoding="utf-8",
     )
     runtime = Runtime.for_testing(config_dir=config_dir, data_dir=tmp_path / "data")
@@ -163,6 +195,7 @@ def test_logout_interrupt_restores_snapshot_and_credentials(
         access_token="secret-token",
         account=Account(id=12345, name="Javier"),
         source=CredentialSource.FILE,
+        **V2_FIELDS,
     )
     snapshot = runtime.snapshots.path(12345)
     snapshot.parent.mkdir(parents=True)

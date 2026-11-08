@@ -39,10 +39,6 @@ class Credential:
     scope: str | None = None
     invalidated: bool = False
 
-    @property
-    def legacy(self) -> bool:
-        return self.source is not CredentialSource.ENVIRONMENT and self.client_id is None
-
 
 class Keyring(Protocol):
     def get_password(self, service: str, username: str) -> str | None: ...
@@ -69,6 +65,10 @@ class CredentialStorageError(RuntimeError):
     """Persistent credential storage could not be read or updated."""
 
 
+class UnsupportedCredentialError(CredentialStorageError):
+    """Stored credentials use a pre-release format that can only be removed."""
+
+
 class CredentialRepository:
     def __init__(self, config_dir: Path, keyring: Keyring) -> None:
         self._path = config_dir / "auth.json"
@@ -93,6 +93,8 @@ class CredentialRepository:
         if not self._path.exists():
             return None
         payload = self._read_payload()
+        if payload["version"] != 2:
+            raise UnsupportedCredentialError(_UNSUPPORTED_FORMAT_MESSAGE)
         source = CredentialSource(cast(str, payload["storage"]))
         account = _account_from_payload(payload)
         if source is CredentialSource.FILE:
@@ -104,31 +106,29 @@ class CredentialRepository:
                 raise CredentialStorageError(_KEYRING_UNAVAILABLE_MESSAGE) from exc
         if not isinstance(token, str) or not token:
             return None
-        if payload["version"] == 2:
-            if source is CredentialSource.KEYRING:
-                try:
-                    secrets = json.loads(token)
-                except ValueError as exc:
-                    raise CredentialStorageError("Stored token pair could not be read.") from exc
-            else:
-                secrets = payload
-            if not isinstance(secrets, dict) or any(
-                not isinstance(secrets.get(key), str) or not secrets[key]
-                for key in ("access_token", "refresh_token")
-            ):
-                raise CredentialStorageError("Stored token pair could not be read.")
-            return Credential(
-                access_token=secrets["access_token"],
-                refresh_token=secrets["refresh_token"],
-                account=account,
-                source=source,
-                expires_at=cast(float, payload["expires_at"]),
-                refresh_expires_at=cast(float, payload["refresh_expires_at"]),
-                client_id=cast(str, payload["client_id"]),
-                scope=cast(str, payload["scope"]),
-                invalidated=bool(payload.get("invalidated", False)),
-            )
-        return Credential(access_token=token, source=source, account=account)
+        if source is CredentialSource.KEYRING:
+            try:
+                secrets = json.loads(token)
+            except ValueError as exc:
+                raise CredentialStorageError("Stored token pair could not be read.") from exc
+        else:
+            secrets = payload
+        if not isinstance(secrets, dict) or any(
+            not isinstance(secrets.get(key), str) or not secrets[key]
+            for key in ("access_token", "refresh_token")
+        ):
+            raise CredentialStorageError("Stored token pair could not be read.")
+        return Credential(
+            access_token=secrets["access_token"],
+            refresh_token=secrets["refresh_token"],
+            account=account,
+            source=source,
+            expires_at=cast(float, payload["expires_at"]),
+            refresh_expires_at=cast(float, payload["refresh_expires_at"]),
+            client_id=cast(str, payload["client_id"]),
+            scope=cast(str, payload["scope"]),
+            invalidated=bool(payload.get("invalidated", False)),
+        )
 
     def ensure_available(self, source: CredentialSource) -> None:
         if source is not CredentialSource.KEYRING:
@@ -157,37 +157,30 @@ class CredentialRepository:
     ) -> None:
         if not access_token:
             raise CredentialStorageError("Refusing to persist an empty Access Token.")
+        if (
+            not refresh_token
+            or not client_id
+            or not scope
+            or any(
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or value <= 0
+                or not math.isfinite(value)
+                for value in (expires_at, refresh_expires_at)
+            )
+        ):
+            raise CredentialStorageError("Refusing to persist an incomplete credential.")
         payload: dict[str, object] = {
-            "version": 1,
+            "version": 2,
             "storage": source.value,
             "account": {"id": account.id, "name": account.name},
+            "client_id": client_id,
+            "scope": scope,
+            "expires_at": expires_at,
+            "refresh_expires_at": refresh_expires_at,
+            "invalidated": invalidated,
         }
-        keyring_value = access_token
-        if refresh_token is not None:
-            if (
-                not refresh_token
-                or not client_id
-                or not scope
-                or any(
-                    not isinstance(value, (int, float))
-                    or isinstance(value, bool)
-                    or value <= 0
-                    or not math.isfinite(value)
-                    for value in (expires_at, refresh_expires_at)
-                )
-            ):
-                raise CredentialStorageError("Refusing to persist an incomplete V2 credential.")
-            payload.update(
-                version=2,
-                client_id=client_id,
-                scope=scope,
-                expires_at=expires_at,
-                refresh_expires_at=refresh_expires_at,
-                invalidated=invalidated,
-            )
-            keyring_value = json.dumps(
-                {"access_token": access_token, "refresh_token": refresh_token}
-            )
+        keyring_value = json.dumps({"access_token": access_token, "refresh_token": refresh_token})
         previous_metadata = self._path.read_bytes() if self._path.exists() else None
         replacing_keyring = (
             source is CredentialSource.FILE
@@ -198,8 +191,7 @@ class CredentialRepository:
         keyring_changed = False
         if source is CredentialSource.FILE:
             payload["access_token"] = access_token
-            if refresh_token is not None:
-                payload["refresh_token"] = refresh_token
+            payload["refresh_token"] = refresh_token
         elif source is not CredentialSource.KEYRING:
             raise CredentialStorageError("Environment credentials cannot be persisted.")
         try:
@@ -334,6 +326,11 @@ def _restore_file(path: Path, previous_content: bytes | None) -> None:
     else:
         atomic_write_bytes(path, previous_content)
 
+
+_UNSUPPORTED_FORMAT_MESSAGE = (
+    "Stored credentials use a format from a pre-release simklcli build that is no "
+    "longer supported. Run simkl auth logout, then simkl auth login."
+)
 
 _KEYRING_UNAVAILABLE_MESSAGE = (
     "No usable OS keyring is available. Re-run login with --storage file "

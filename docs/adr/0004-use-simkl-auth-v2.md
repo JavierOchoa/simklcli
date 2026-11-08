@@ -17,7 +17,8 @@ Implementation and local verification tracking: [GitHub issue #14](https://githu
 ## Decision
 
 - Cut over new online operations to AUTH V2 only. Keep legacy credentials
-  readable for dated offline snapshots and explicit same-account reconnection.
+  readable for dated offline snapshots and explicit same-account reconnection
+  (withdrawn; see the amendment below).
 - Register as **TV, devices & command line**. Use the device-based PIN flow;
   it has no PKCE, redirect URI, or client secret. Send the private device code
   only in the token-request body and show the complete approval URL.
@@ -43,6 +44,18 @@ documents V2 client IDs as safe to publish: a bare ID reaches only public
 catalog data, and quotas are per user, not per app. `SIMKL_CLIENT_ID` still
 overrides it, and existing credentials keep their stored issuer, so replacing
 the embedded ID later does not invalidate earlier logins.
+
+## Amendment: no AUTH V1 compatibility
+
+The V2 cutover landed before the first public release, so v0.1.0 shipped AUTH V2
+only and no installed copy ever wrote an AUTH V1 credential. Reading legacy
+credentials for offline snapshots and same-account reconnection served only
+pre-release development installs, so it is removed. A leftover version-1
+credential file is reported as unsupported with instructions to log out;
+logout deletes it and its snapshot without attempting revocation. `auth status
+--json` no longer reports `auth_version`. The early rejection of 64-character
+hexadecimal `SIMKL_ACCESS_TOKEN` values stays as a cheap guard against V1
+tokens copied from other tools.
 
 ## Consequences
 
